@@ -4,37 +4,26 @@
   <meta charset="utf-8" />
   <title>LoL Stats</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 24px; }
-    header { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-    h1 { margin: 0; }
-    nav { margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap; }
-    button { padding: 6px 10px; border: 1px solid #ddd; border-radius: 8px; background: #fff; cursor: pointer; }
-    button.active { background: #f0f0f0; }
-    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
-    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; }
-    th { background: #fafafa; position: sticky; top: 0; }
-    .section-title { margin-top: 24px; font-weight: 700; }
-    .muted { color: #666; font-size: 0.9em; }
-  </style>
+  <link rel="stylesheet" href="theme.css" />
 </head>
 <body>
   <header>
-    <h1>LoL Leaderboards</h1>
-    <span class="muted">ranked by Wilson lower bound (95%)</span>
+    <h1>LoL Stats — Leaderboards</h1>
+    <div class="muted">Click a champion to view detailed builds & matchups.</div>
   </header>
 
-  <nav id="roleTabs">
-    <button data-role="overall" class="active">Overall</button>
-    <button data-role="Top">Top</button>
-    <button data-role="Jgl">Jgl</button>
-    <button data-role="Mid">Mid</button>
-    <button data-role="Adc">Adc</button>
-    <button data-role="Sup">Sup</button>
+  <nav id="roleTabs" class="card" aria-label="Role tabs">
+    <button data-role="overall" class="pill">Overall</button>
+    <button data-role="Top" class="pill">Top</button>
+    <button data-role="Jgl" class="pill">Jungle</button>
+    <button data-role="Mid" class="pill">Mid</button>
+    <button data-role="Adc" class="pill">ADC</button>
+    <button data-role="Sup" class="pill">Support</button>
   </nav>
 
-  <div id="content"></div>
+  <main id="content" class="card" aria-live="polite"></main>
 
-  <script src="script.js"></script>
+  <noscript><p class="muted">This site requires JavaScript to display leaderboards.</p></noscript>
+  <script src="script.js" defer></script>
 </body>
 </html>

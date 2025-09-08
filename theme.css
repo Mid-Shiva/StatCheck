@@ -1,0 +1,79 @@
+/* Dark, comfy theme */
+:root{
+  color-scheme: dark;
+  --bg:#0f1117; --bg2:#0b0f14;
+  --panel:#151a22; --panel2:#10151d;
+  --text:#e8ecf1; --muted:#9aa4b2;
+  --border:#222a36;
+  --accent:#7aa2f7; --accent2:#a78bfa;
+  --good:#34d399; --bad:#f87171;
+  --shadow:0 1px 0 rgba(255,255,255,.02), 0 10px 30px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:24px;
+  font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  color:var(--text);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(122,162,247,.07), transparent 60%),
+    radial-gradient(900px 400px at 110% 10%, rgba(167,139,250,.08), transparent 60%),
+    var(--bg);
+}
+a{color:var(--text);text-decoration:none}
+a:hover{color:var(--accent);text-decoration:underline}
+
+header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+h1{margin:0;font-size:1.6rem}
+.muted{color:var(--muted);font-size:.9em}
+
+.card{
+  background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:16px;
+  margin:16px 0;
+  box-shadow:var(--shadow);
+}
+.section-title{font-weight:700;margin:8px 0 12px;letter-spacing:.2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.card .card{margin:0}
+
+.badge{
+  display:inline-block; font-size:.75rem; padding:2px 6px; border:1px solid var(--border);
+  border-radius:999px; margin-right:6px; color:var(--muted); background:#0f141c;
+}
+
+table{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border-radius:10px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+th{background:#0f141c;color:var(--muted);font-weight:600;position:sticky;top:0;z-index:1}
+tbody tr:nth-child(odd){background:rgba(255,255,255,.02)}
+tbody tr:hover{background:rgba(122,162,247,.08);transition:background .15s ease}
+
+/* cells */
+td { text-align:left }
+td.num { text-align:right }
+
+/* center numeric headers for better spacing */
+thead th { text-align:left }
+thead th[data-col="games"],
+thead th[data-col="winrate"],
+thead th[data-col="avg_minute"],
+thead th[data-col="avg_kda"],
+thead th[data-col="avg_dpm"],
+thead th[data-col="avg_length"],
+thead th[data-col="avg_cs10"],
+thead th[data-col="avg_golddiv10"],
+thead th[data-col="avg_kp"],
+thead th[data-col="Rank"] { text-align:center }
+
+/* pills */
+.pill{
+  display:inline-block;padding:4px 10px;border:1px solid var(--border);
+  border-radius:999px;font-size:12px;margin-left:6px;background:#0f141c;color:var(--text);
+  transition:transform .1s ease, background .15s ease, border-color .15s ease;
+}
+.pill:hover{transform:translateY(-1px);border-color:#2a3342}
+.pill.active,[aria-current="true"].pill{background:rgba(122,162,247,.14);border-color:rgba(122,162,247,.5)}
+
+@media (max-width:640px){ body{margin:16px} h1{font-size:1.3rem} }
