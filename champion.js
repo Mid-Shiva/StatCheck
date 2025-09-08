@@ -4,6 +4,30 @@ async function loadJSON(path) {
   return res.json();
 }
 
+function itemTooltip(row) {
+  const bits = [];
+  if (row.avg_minute != null) bits.push(`${row.avg_minute}m`);
+  if (row.avg_level != null) bits.push(`lvl ${row.avg_level}`);
+  if (row.avg_golddiff != null) bits.push(`${row.avg_golddiff >= 0 ? "+" : ""}${row.avg_golddiff}g`);
+  if (row.avg_leveldiff != null) bits.push(`${row.avg_leveldiff >= 0 ? "+" : ""}${row.avg_leveldiff} lvl diff`);
+  return bits.length ? `Avg: ${bits.join(" • ")}` : "";
+}
+
+function sectionWithTooltips(id, rows, nameLabel) {
+  const el = document.getElementById(id);
+  if (!rows || rows.length === 0) {
+    el.innerHTML = "<p class='muted'>No data.</p>";
+    return;
+  }
+  const thead = `<tr><th>${nameLabel}</th><th>Winrate %</th><th>Games</th></tr>`;
+  const tbody = rows.map(r => {
+    const tip = itemTooltip(r);
+    const nameCell = tip ? `<span title="${tip}">${r.name}</span>` : r.name;
+    return `<tr><td>${nameCell}</td><td>${r.winrate ?? ""}</td><td>${r.games ?? ""}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+}
+
 function qs(name) {
   const u = new URLSearchParams(location.search);
   return u.get(name) || "";
@@ -72,33 +96,56 @@ function pills(roles, active, onClick) {
       `<div class="card" style="margin:0"><div class="muted">${k}</div><div style="font-size:20px">${num(v)}</div></div>`
     ).join("");
   }
-
-  function section(id, rows, opts={}) {
-    const el = document.getElementById(id);
-    const cols = [
-      { label: opts.nameLabel || "Name", key: "name" },
-      { label: "Winrate %", key: "winrate" },
-      { label: "Games", key: "games" }
-    ];
-    el.innerHTML = listTable(rows, cols.map(c => ({...c, toString(){return c.label;}})));
+  
+  function section(id, rows, nameLabel = "Name") {
+  const el = document.getElementById(id);
+  if (!rows || rows.length === 0) { el.innerHTML = "<p class='muted'>No data.</p>"; return; }
+  const thead = `<tr><th>${nameLabel}</th><th>Winrate %</th><th>Games</th></tr>`;
+  const tbody = rows.map(r => `<tr><td>${r.name ?? ""}</td><td>${r.winrate ?? ""}</td><td>${r.games ?? ""}</td></tr>`).join("");
+  el.innerHTML = `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
   }
+
+  function sectionWithTooltips(id, rows, nameLabel) {
+  const el = document.getElementById(id);
+  if (!rows || rows.length === 0) {
+    el.innerHTML = "<p class='muted'>No data.</p>";
+    return;
+  }
+  const cols = ["name","winrate","games"];
+  const thead = `<tr><th>${nameLabel}</th><th>Winrate %</th><th>Games</th></tr>`;
+  const tbody = rows.map(r => {
+    const tip = itemTooltip(r);
+    const nameCell = tip ? `<span title="${tip}">${r.name}</span>` : r.name;
+    return `<tr><td>${nameCell}</td><td>${r.winrate ?? ""}</td><td>${r.games ?? ""}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+}
 
   function render() {
-    title.innerText = `${name} — ${role}`;
-    renderAverages();
+  title.innerText = `${name} — ${role}`;
+  renderAverages();
 
-    const prof = champions[name].roles[role] || {};
-    section("teammates", prof.teammates || []);
-    section("opponentsBest", prof.opponents_best || [], { nameLabel: "Opponent (best)" });
-    section("opponentsWorst", prof.opponents_worst || [], { nameLabel: "Opponent (worst)" });
-    section("spells", prof.top_spells || [], { nameLabel: "Spell Pair" });
-    section("starters", prof.starter_items || [], { nameLabel: "Starter" });
-    section("boots", prof.boots || [], { nameLabel: "Boots" });
-    section("tier3boots", prof.tier3_boots || [], { nameLabel: "Tier 3 Boots" });
-    section("items", prof.items || [], { nameLabel: "Item" });
-    section("skillorder", prof.skillorder || [], { nameLabel: "Order" });
-    section("runes", prof.runes || [], { nameLabel: "Runeset" });
-  }
+  const prof = champions[name].roles[role] || {};
+
+  // NEW: duos (allowed pairs only) and teammates (broad)
+  section("duos",      prof.duos          || [], "Partner");
+  section("teammates", prof.teammates     || [], "Teammate");
+
+  // REPLACED: show only role-mirrored opponents
+  section("opponentsMirror", prof.opponents_mirror || [], "Opponent");
+
+  // Items with tooltips (averages on hover where available)
+  sectionWithTooltips("starters",   prof.starter_items  || [], "Starter");
+  sectionWithTooltips("trinkets",   prof.trinkets       || [], "Trinket");    // NEW
+  sectionWithTooltips("first10",    prof.first10_items  || [], "First 10m");
+  sectionWithTooltips("boots",      prof.boots          || [], "Boots");
+  sectionWithTooltips("tier3boots", prof.tier3_boots    || [], "Tier 3 Boots");
+  sectionWithTooltips("items",      prof.items          || [], "Item");
+
+  // Keep your runes/skill order sections as before
+  section("skillorder", prof.skillorder || [], "Order");
+  section("runes",      prof.runes      || [], "Runeset");
+}
 
   renderRolePills();
   render();
