@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Champion | LoL Stats</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    a { color: inherit; }
+    header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    .muted { color: #666; font-size: 0.9em; }
+    h1 { margin: 0; }
+    .card { border: 1px solid #eee; border-radius: 12px; padding: 16px; margin: 16px 0; box-shadow: 0 1px 0 #f3f3f3; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #eee; padding: 6px 8px; text-align: left; }
+    th { background: #fafafa; }
+    .section-title { font-weight: 700; margin: 16px 0 8px; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; margin-left:6px;}
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <a href="index.html">← Back</a>
+      <h1 id="title"></h1>
+      <div class="muted">Data ranked by Wilson lower bound (95%) blended with playrate</div>
+    </div>
+    <div id="rolePills"></div>
+  </header>
+
+  <div class="card">
+    <div class="section-title">Averages</div>
+    <div class="grid" id="averages"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Best Teammates</div>
+    <div id="teammates"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Best Opponents</div>
+    <div id="opponentsBest"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Worst Opponents</div>
+    <div id="opponentsWorst"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Summoner Spells</div>
+    <div id="spells"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Starter Items</div>
+    <div id="starters"></div>
+  </div>
+
+  <div class="card">
+   <div class="section-title">First 10 Minutes – Purchases</div>
+   <div id="first10"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Boots</div>
+    <div id="boots"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Tier 3 Boots</div>
+    <div id="tier3boots"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Core Items</div>
+    <div id="items"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Skill Order</div>
+    <div id="skillorder"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Runes</div>
+    <div id="runes"></div>
+  </div>
+
+  <script src="champion.js"></script>
+</body>
+</html>
