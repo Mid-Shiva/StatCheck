@@ -1,0 +1,7 @@
+[
+  { "champion": "Aatrox", "games": 1821, "winRate": 0.52, "pickRate": 0.041, "banRate": 0.08 },
+  { "champion": "Ahri",   "games": 2140, "winRate": 0.49, "pickRate": 0.053, "banRate": 0.05 },
+  { "champion": "Akali",  "games": 2015, "winRate": 0.51, "pickRate": 0.049, "banRate": 0.11 },
+  { "champion": "Akshan", "games":  990, "winRate": 0.48, "pickRate": 0.019, "banRate": 0.03 },
+  { "champion": "Yone",   "games": 1755, "winRate": 0.50, "pickRate": 0.044, "banRate": 0.06 }
+]

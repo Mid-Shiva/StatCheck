@@ -1,0 +1,7 @@
+[
+  { "label": "2025-08-20", "games": 800,  "players": 1900 },
+  { "label": "2025-08-27", "games": 1200, "players": 2400 },
+  { "label": "2025-09-03", "games": 2200, "players": 3600 },
+  { "label": "2025-09-10", "games": 2600, "players": 3900 },
+  { "label": "2025-09-17", "games": 3100, "players": 4200 }
+]
