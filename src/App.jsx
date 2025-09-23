@@ -24,6 +24,155 @@ const prettySpell = (s) => {
   return m[k] || s;
 };
 
+// ---- DDragon helpers (icons) ----
+const DDRAGON_VER_FALLBACK = "15.18.1";
+const MF_ICON =
+  "https://ddragon.leagueoflegends.com/cdn/img/perk-images/Styles/Inspiration/MagicalFootwear/MagicalFootwear.png";
+
+// --- Champion ID mapping (very forgiving) ---
+const CHAMP_ID_EXCEPT = {
+  "Aurelion Sol": "AurelionSol",
+  "Bel'Veth": "Belveth",
+  "Cho'Gath": "Chogath",
+  "Dr. Mundo": "DrMundo",
+  "Jarvan IV": "JarvanIV",
+  "Kai'Sa": "Kaisa",   // straight apostrophe
+  "Kai’Sa": "Kaisa",   // curly apostrophe
+  "Kha'Zix": "Khazix",
+  "Kha’Zix": "Khazix",
+  "LeBlanc": "Leblanc",
+  "Lee Sin": "LeeSin",
+  "Master Yi": "MasterYi",
+  "Miss Fortune": "MissFortune",
+  "Nunu & Willump": "Nunu",
+  "Renata Glasc": "Renata",
+  "Tahm Kench": "TahmKench",
+  "Twisted Fate": "TwistedFate",
+  "Vel'Koz": "Velkoz",
+  "Vel’Koz": "Velkoz",
+  "Wukong": "MonkeyKing",
+  "Xin Zhao": "XinZhao",
+  "Kog'Maw": "KogMaw",
+  "Kog’Maw": "KogMaw",
+};
+
+const normName = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+// Champion name → DDragon file id (best-effort)
+function toDdragonChampId(name) {
+  if (!name) return "Aatrox";
+  const trimmed = String(name).trim();
+
+  // known exceptions first
+  if (CHAMP_ID_EXCEPT[trimmed]) return CHAMP_ID_EXCEPT[trimmed];
+
+  // normalize: remove accents & punctuation, TitleCase then strip spaces
+  let s = trimmed
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")      // accents
+    .replace(/['’`´.]/g, "")              // quotes/periods
+    .replace(/[^A-Za-z0-9 ]+/g, " ");     // other punct to space
+  s = s.replace(/\b(\w)/g, (_, c) => c.toUpperCase()).replace(/\s+/g, "");
+  return s || "Aatrox";
+}
+
+// Get latest DDragon version (cached), fallback if offline
+function useDdragonVersion() {
+  const [ver, setVer] = useState(null);
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        const res = await fetch("https://ddragon.leagueoflegends.com/api/versions.json", { cache: "no-store" });
+        const arr = await res.json();
+        if (!ignore) setVer(arr?.[0] || DDRAGON_VER_FALLBACK);
+      } catch {
+        if (!ignore) setVer(DDRAGON_VER_FALLBACK);
+      }
+    })();
+    return () => { ignore = true; };
+  }, []);
+  return ver || DDRAGON_VER_FALLBACK;
+}
+
+
+
+// <ChampionIcon name="Aatrox" version={ver} />
+function ChampionIcon({ name, version, size = 20, className = "" }) {
+  const [ver, setVer] = useState(version || DDRAGON_VER_FALLBACK);
+  const [triedFallback, setTriedFallback] = useState(false);
+
+  const id = toDdragonChampId(name);
+  const src = `https://ddragon.leagueoflegends.com/cdn/${ver}/img/champion/${id}.png`;
+
+  return (
+    <img
+      src={src}
+      alt=""
+      width={size}
+      height={size}
+      className={`rounded ${className}`}
+      loading="lazy"
+      onError={() => {
+        // If current version 404s, fall back to a known-good one and log the URL
+        if (!triedFallback && ver !== DDRAGON_VER_FALLBACK) {
+          console.warn("ChampionIcon 404, falling back:", src);
+          setVer(DDRAGON_VER_FALLBACK);
+          setTriedFallback(true);
+        } else {
+          console.error("ChampionIcon failed for", name, "URL:", src);
+        }
+      }}
+      title={name}
+    />
+  );
+}
+
+// Map normalized item name → numeric id (e.g. "platedsteelcaps" -> "3047")
+function useItemIndex(version) {
+  const [idx, setIdx] = useState(null);
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        const res = await fetch(`https://ddragon.leagueoflegends.com/cdn/${version}/data/en_US/item.json`, { cache: "force-cache" });
+        const json = await res.json();
+        const map = new Map();
+        for (const [id, it] of Object.entries(json?.data || {})) {
+          const key = normName(it?.name || "");
+          if (key && !map.has(key)) map.set(key, id);
+        }
+        map.set("boots", "1001"); // Tier-1 "Boots"
+        setIdx(map);
+      } catch {
+        if (!ignore) setIdx(null);
+      }
+    })();
+    return () => { ignore = true; };
+  }, [version]);
+  return idx;
+}
+
+// <ItemIcon name="Plated Steelcaps" version={ver} itemIndex={idx} />
+function ItemIcon({ name, version, itemIndex, size = 20, className = "" }) {
+  if (!name) return null;
+  const key = normName(name);
+  if (key === "magicalfootwear") {
+    return <img src={MF_ICON} alt="" width={size} height={size} className={className} loading="lazy" />;
+  }
+  if (key === "noboots") {
+    return <div className={`w-[${size}px] h-[${size}px] rounded bg-neutral-800 grid place-items-center text-[10px] text-neutral-300 ${className}`}>—</div>;
+  }
+  const id = itemIndex?.get(key);
+  if (id) {
+    const src = `https://ddragon.leagueoflegends.com/cdn/${version}/img/item/${id}.png`;
+    return <img src={src} alt="" width={size} height={size} className={`rounded ${className}`} loading="lazy" />;
+  }
+  const initials = name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  return <div className={`w-[${size}px] h-[${size}px] rounded bg-neutral-800 grid place-items-center text-[10px] text-neutral-300 ${className}`}>{initials}</div>;
+}
+
+
 async function getJSON(path, fallback) {
   try {
     const res = await fetch(path, { cache: "no-store" });
@@ -69,12 +218,66 @@ function LeaderboardTable({ rows }) {
   const fmtInt   = n => (n == null ? "–" : new Intl.NumberFormat().format(n));
   const fmtCS10  = x => (x == null ? "–" : Number(x).toFixed(2));
   const fmtCSD10 = x => (x == null ? "–" : Number(x).toFixed(2));
+  const ddVersion = useDdragonVersion();
+  const CHAMP_ICON_SIZE = 40; // try 28–32
+
+  const gradeFromIdx = (idx = 0) => {
+  if (idx >= 90) return "S";
+  if (idx >= 75) return "A";
+  if (idx >= 60) return "B";
+  if (idx >= 40) return "C";
+  return "D";
+  };
+  const gradeClass = (g) => ({
+    S: "bg-emerald-900/30 border-emerald-700 text-emerald-300",
+    A: "bg-blue-900/30 border-blue-700 text-blue-300",
+    B: "bg-indigo-900/30 border-indigo-700 text-indigo-300",
+    C: "bg-amber-900/30 border-amber-700 text-amber-300",
+    D: "bg-rose-900/30 border-rose-700 text-rose-300",
+  }[g] || "bg-neutral-800 border-neutral-700 text-neutral-200");
 
   const COLUMNS = [
-    { key: "rank",  label: "#", align: "left", accessor: (_r, i) => i+1, render: (_r, i) => i+1, sortable: false },
+  { key: "tier", label: "Tier", align: "left", accessor: r => r.score, // sort by EB score
+    render: r => {
+      const g = gradeFromIdx(r.scoreIdx);
+      return (
+        <div className="flex items-center gap-3">
+          <span className={`text-xs px-2 py-0.5 rounded border ${gradeClass(g)}`}>{g}</span>
+          <div className="w-20 h-2 rounded bg-neutral-800 overflow-hidden">
+            <div
+              className="h-2 bg-blue-500"
+              style={{ width: `${Math.max(0, Math.min(100, r.scoreIdx ?? 0))}%` }}
+            />
+          </div>
+          {(() => {
+            const idx = Math.max(0, Math.min(100, r.scoreIdx ?? 0));
+            return (
+              <span
+                className="text-xs px-2 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-200"
+                title="Games-weighted rank (0–100). Higher = better; heavily favors more games."
+              >
+                TierScore {idx}
+              </span>
+            );
+          })()}
+        </div>
+      );
+    },
+    sortable: true
+  },
     { key: "champ", label: "Champion", align: "left", accessor: r => r.champion,
-      render: r => <Link className="text-blue-600 hover:underline" to={`/champions/${r.championSlug || r.champion?.toLowerCase?.().replace(/[^a-z0-9]+/g,"")}`}>{r.champion}</Link>,
-      sortable: true},
+      render: r => (
+        <Link
+          className="text-blue-600 hover:underline"
+          to={`/champions/${r.championSlug || r.champion?.toLowerCase?.().replace(/[^a-z0-9]+/g,"")}`}
+        >
+          <span className="inline-flex items-center gap-3">
+            <ChampionIcon name={r.champion} version={ddVersion} size={CHAMP_ICON_SIZE} className="shrink-0" />
+            <span className="text-[15px]">{r.champion}</span>
+          </span>
+        </Link>
+      ),
+    },
     { key: "games", label: "Games", align: "right", accessor: r => r.games, render: r => fmtInt(r.games), sortable: true  },
     { key: "win",   label: "Win%",  align: "right", accessor: r => r.winRate, render: r => fmtPct(r.winRate), sortable: true  },
     { key: "pick",  label: "Pick%", align: "right", accessor: r => r.pickRate, render: r => fmtPick(r.pickRate), sortable: true },
@@ -144,7 +347,7 @@ function LeaderboardTable({ rows }) {
             >
               {COLUMNS.map((c) => (
                 <td key={c.key} className={`px-3 py-2 tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
-                  {c.key === "rank" ? (i + 1) : c.render(r, i)}
+                  {c.render ? c.render(r, i) : (r[c.key] ?? "")}
                 </td>
               ))}
             </tr>
@@ -166,10 +369,85 @@ function ChampionPage() {
 
   const pct0 = x => (x==null ? "–" : (x*100).toFixed(0)+"%");
   const fmtTime = s => (s==null ? "–" : (s/60).toFixed(1)+"m"); // seconds -> minutes 1dp
+  const ddVersion = useDdragonVersion();
+  const itemIndex = useItemIndex(ddVersion);
+  const CHAMP_HEADER_ICON_SIZE = 60; // try 56–64 if you want bigger
+  const displayName = meta?.name || (slug ? slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "");
+  const ITEM_ICON_SIZE = 40; // try 28 or 32 if you want larger  
+  const toPct = (x) => x == null ? "–" : `${(x*100).toFixed(1)}%`;
+
+  // --- Mastery split (Best/Best2/Best3/Top5/BelowTop5) ---
+  const MasteryTable = ({ mastery, totalGames }) => {
+    if (!mastery) return null;
+
+    const headers = [
+      ["BestMastery",     "Best Mastery"],
+      ["Best2Mastery",    "Best 2 Mastery"],
+      ["Best3Mastery",    "Best 3 Mastery"],
+      ["BestTop5Mastery", "Best Top 5 Mastery"],
+      ["BelowTop5Mastery","Below Top 5 Mastery"],
+    ];
+
+    const toPct0 = (x) => x == null ? "–" : `${(x*100).toFixed(0)}%`;
+    const toPct1 = (x) => x == null ? "–" : `${(x*100).toFixed(1)}%`;
+
+    return (
+      <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
+        <div className="text-sm font-semibold mb-2">By Player Mastery</div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="text-left text-neutral-300">
+              <tr>
+                {headers.map(([key, label]) => (
+                  <th key={key} className="px-2 py-1">{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {/* Winrate row */}
+              <tr className="border-t border-neutral-800">
+                {headers.map(([key]) => (
+                  <td key={key} className="px-2 py-1 tabular-nums">
+                    {toPct1(mastery?.[key]?.winRate)}
+                  </td>
+                ))}
+              </tr>
+              {/* Share row */}
+              <tr className="border-t border-neutral-800">
+                {headers.map(([key]) => (
+                  <td key={key} className="px-2 py-1 tabular-nums">
+                    {toPct0(mastery?.[key]?.share)}
+                    {typeof mastery?.[key]?.games === "number" && (
+                      <span className="opacity-60"> · {new Intl.NumberFormat().format(mastery[key].games)} games</span>
+                    )}
+                  </td>
+                ))}
+              </tr>
+              {/* Avg ChampMasteryPer row (not shown for BelowTop5Mastery) */}
+              <tr className="border-t border-neutral-800">
+                {headers.map(([key]) => (
+                  <td key={key} className="px-2 py-1 tabular-nums">
+                    {key === "BelowTop5Mastery"
+                      ? "–"
+                      : (mastery?.[key]?.avgChampMasteryPer == null
+                          ? "–"
+                          : Number(mastery[key].avgChampMasteryPer).toFixed(0))}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
 
   const ItemTable = ({ title, rows }) => {
   // filter again on the client defensively (in case older JSONs don’t filter)
   const safeRows = Array.isArray(rows) ? rows.filter(r => (r.share ?? 0) >= 0.01) : [];
+  const displayName =
+  meta?.name ||
+  (slug ? slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "");
   if (safeRows.length === 0) return null;
 
   return (
@@ -196,8 +474,17 @@ function ChampionPage() {
               ].join("\n");
               return (
                 <tr key={i} className="border-t border-neutral-800 hover:bg-neutral-800/60">
-                  <td className="px-2 py-1">
-                    <span title={tooltip}>{r.item}</span>
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-3" title={tooltip}>
+                      <ItemIcon
+                        name={r.item}
+                        version={ddVersion}
+                        itemIndex={itemIndex}
+                        size={ITEM_ICON_SIZE}
+                        className="shrink-0"
+                      />
+                      <span className="text-[15px]">{r.item}</span>
+                    </div>
                   </td>
                   <td className="px-2 py-1 text-right tabular-nums">{r.games?.toLocaleString?.() ?? r.games}</td>
                   <td className="px-2 py-1 text-right tabular-nums">
@@ -212,6 +499,56 @@ function ChampionPage() {
     </div>
   );
 };
+
+function MatchupTable({ title, rows }) {
+  const int = (x) => (x==null ? "–" : new Intl.NumberFormat().format(Math.round(x)));
+  return (
+    <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
+      <div className="text-sm font-semibold mb-2">{title}</div>
+      {Array.isArray(rows) && rows.length ? (
+        <table className="min-w-full text-sm">
+          <thead className="text-left text-neutral-300">
+            <tr>
+              <th className="px-2 py-1">Opponent</th>
+              <th className="px-2 py-1 text-right">Games</th>
+              <th className="px-2 py-1 text-right">Tier</th>
+              <th className="px-2 py-1 text-right">Winrate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((m, i) => (
+              <tr key={i} className="border-t border-neutral-800">
+                <td className="px-2 py-1">
+                  <div className="flex items-center gap-2">
+                    <ChampionIcon name={m.enemy} version={ddVersion} size={36} />
+                    <span>{m.enemy}</span>
+                  </div>
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums">{int(m.games)}</td>
+                 <td className="px-2 py-1 text-right">
+                   <span className={`text-xs px-2 py-0.5 rounded border ${
+                     (m.vsIdx >= 90) ? "bg-emerald-900/30 border-emerald-700 text-emerald-300" :
+                     (m.vsIdx >= 75) ? "bg-blue-900/30 border-blue-700 text-blue-300" :
+                     (m.vsIdx >= 60) ? "bg-indigo-900/30 border-indigo-700 text-indigo-300" :
+                     (m.vsIdx >= 40) ? "bg-amber-900/30 border-amber-700 text-amber-300" :
+                                       "bg-rose-900/30 border-rose-700 text-rose-300"
+                   }`}>
+                     {m.vsIdx >= 90 ? "S" : m.vsIdx >= 75 ? "A" : m.vsIdx >= 60 ? "B" : m.vsIdx >= 40 ? "C" : "D"}
+                   </span>
+                 </td>
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {m.games ? ((m.wins / m.games) * 100).toFixed(1) + "%" : "–"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div className="text-sm opacity-70">No matchup data.</div>
+      )}
+    </div>
+  );
+}
 
 const LegendaryTables = ({ data }) => {
   if (!Array.isArray(data) || data.length === 0) return null;
@@ -245,7 +582,14 @@ function combineAcrossPatches(allData, role) {
     avgGoldDiffAt5_sum: 0, avgGoldDiffAt10_sum: 0,
     avgCsAt10_sum: 0, avgCsDiffAt10_sum: 0, avgDPM_sum: 0, avgKP_sum: 0,
     teamFBTowerRate_num: 0, teamFBTowerRate_den: 0,
-    topOpponents: {},
+    opponents: {},
+    mastery: {
+      BestMastery:       { games: 0, wins: 0, sum: 0, cnt: 0 },
+      Best2Mastery:      { games: 0, wins: 0, sum: 0, cnt: 0 },
+      Best3Mastery:      { games: 0, wins: 0, sum: 0, cnt: 0 },
+      BestTop5Mastery:   { games: 0, wins: 0, sum: 0, cnt: 0 },
+      BelowTop5Mastery:  { games: 0, wins: 0, sum: 0, cnt: 0 }, // sum/cnt unused
+    },
     shardsGrid: [ {}, {}, {} ],
     summonerCombos: {},
     items: { starter:{}, support:{}, boots:{}, footwear_games:0, footwear_sum_time:0, first10:{}, legendary:[] }
@@ -274,9 +618,28 @@ function combineAcrossPatches(allData, role) {
     addW("avgKP_sum", r.avgKP);
     if (r.teamFBTowerRate!=null && g) { acc.teamFBTowerRate_num += r.teamFBTowerRate*g; acc.teamFBTowerRate_den += g; }
 
-    // Opponents
-    (r.topOpponents || []).forEach(o=>{
-      acc.topOpponents[o.opponentChamp] = sum(acc.topOpponents[o.opponentChamp], o.games);
+    // mastery buckets
+    if (pr.mastery) {
+      for (const key of Object.keys(acc.mastery)) {
+        const mm = pr.mastery[key];
+        if (!mm) continue;
+        const g = mm.games || 0;
+        const wr = mm.winRate == null ? null : Number(mm.winRate);
+        const avg = m.avgChampMasteryPer == null ? "–" : m.avgChampMasteryPer.toFixed(1)
+
+        acc.mastery[key].games += g;
+        if (wr != null) acc.mastery[key].wins += Math.round(wr * g);
+        if (avg != null && g > 0) { acc.mastery[key].sumAvg += avg * g; acc.mastery[key].denAvg += g; }
+      }
+    }
+    // Opponents (games + wins)
+    (r.opponents || []).forEach(o => {
+      const name = o.opponentChamp;
+      const cur = acc.opponents[name] || { games: 0, wins: 0 };
+      cur.games += o.games || 0;
+      // prefer explicit wins; else infer from winRate*games
+      cur.wins  += (o.wins != null) ? o.wins : Math.round((o.winRate || 0) * (o.games || 0));
+      acc.opponents[name] = cur;
     });
 
     // Shards
@@ -353,9 +716,12 @@ function combineAcrossPatches(allData, role) {
     return { options };
   });
 
-  const topOpponents = Object.entries(acc.topOpponents)
-    .map(([opponentChamp,games])=>({opponentChamp, games}))
-    .sort((a,b)=> b.games-a.games).slice(0,10);
+  const opponentsList = Object.entries(acc.opponents).map(([name, v]) => ({
+    opponentChamp: name,
+    games: v.games,
+    wins: v.wins,
+    winRate: v.games ? v.wins / v.games : null,
+  }));
 
   const combos = Object.entries(acc.summonerCombos).map(([key,v])=>{
     const games=v.games||0, winRate=games? v.wins/games:null;
@@ -379,8 +745,27 @@ function combineAcrossPatches(allData, role) {
     avgDPM:           acc.games? acc.avgDPM_sum/acc.games : null,
     avgKP:            acc.games? acc.avgKP_sum/acc.games : null,
     teamFBTowerRate:  acc.teamFBTowerRate_den ? acc.teamFBTowerRate_num/acc.teamFBTowerRate_den : null,
-    topOpponents,
+    opponents: opponentsList,
     shardsGrid,
+    mastery: (() => {
+      const out = {};
+      const totalG = acc.games || 0;
+      for (const key of Object.keys(acc.mastery)) {
+        const m = acc.mastery[key];
+        const g = m.games || 0;
+        const w = m.wins || 0;
+        out[key] = {
+          games: g,
+          share: totalG ? g / totalG : 0,
+          winRate: g ? w / g : null,
+          // no average for BelowTop5Mastery (will render as "–")
+          ...(key === "BelowTop5Mastery"
+            ? {}
+            : { avgChampMasteryPer: (m.denAvg ? (m.sumAvg / m.denAvg) : null) })
+        };
+      }
+      return out;
+    })(),
     summonerCombosTop: combos,
     items: {
       starter: toRows(acc.items.starter, acc.games),
@@ -427,6 +812,68 @@ function combineAcrossPatches(allData, role) {
     return data[patch]?.[role] || null;
   }, [data, patch, role]);
 
+  // --- MATCHUPS: compute EB score (heavily games-weighted) ---
+  function matchupScore(wins, games, prior = (cur?.winRate ?? 0.5), K = 800) {
+    const alpha = prior * K, beta = (1 - prior) * K;
+    return (wins + alpha) / (games + alpha + beta);
+  }
+
+  // require real opponent data; skip if we don't have wins nor winRate
+  const rawOpp = Array.isArray(cur?.opponents) ? cur.opponents : [];
+
+  // normalize rows and compute score
+  const scoredOpp = rawOpp
+    .filter(o => o && o.opponentChamp && (o.games || 0) > 0 && (o.wins != null || o.winRate != null))
+    .map(o => {
+      const games = o.games || 0;
+      const wins  = (o.wins != null) ? o.wins : Math.round((o.winRate || 0) * games);
+      const wr    = games ? wins / games : null;         // observed WR for display
+      const score = matchupScore(wins, games, cur?.winRate ?? 0.5, 800);
+      return { enemy: o.opponentChamp, games, wins, winRate: wr, vsScore: score };
+    });
+
+  // build a 0..100 index to grade
+  const sMin = Math.min(...scoredOpp.map(x => x.vsScore));
+  const sMax = Math.max(...scoredOpp.map(x => x.vsScore));
+  const span = (isFinite(sMin) && isFinite(sMax) && sMax > sMin) ? (sMax - sMin) : 1;
+
+  const withIdx = scoredOpp.map(x => ({
+    ...x,
+    vsIdx: Math.round(100 * (x.vsScore - sMin) / span)
+  }));
+
+  // grading like the leaderboard
+  const gradeFromIdx = (idx = 0) => {
+    if (idx >= 90) return "S";
+    if (idx >= 75) return "A";
+    if (idx >= 60) return "B";
+    if (idx >= 40) return "C";
+    return "D";
+  };
+
+  // order: Best by score desc; Worst by score asc
+  const best10  = [...withIdx].sort((a,b) => (b.vsScore - a.vsScore) || (b.games - a.games)).slice(0, 10);
+  const MIN_WORST_GAMES = Math.max(10, Math.round(0.02 * (cur?.games || 0))); // 2% of champ games, at least 10
+
+  const worstSorted = [...withIdx].sort(
+    (a,b) => (a.vsScore - b.vsScore) || (b.games - a.games)
+  );
+
+  // first take rows with enough games
+  let worst10 = worstSorted.filter(r => (r.games || 0) >= MIN_WORST_GAMES).slice(0, 10);
+
+  // if we didn’t get 10 yet, relax the floor gradually (keeps order by EB score)
+  if (worst10.length < 10) {
+    const half = Math.max(5, Math.floor(MIN_WORST_GAMES / 2));
+    const add = worstSorted.filter(r => (r.games || 0) >= half && !worst10.includes(r))
+                          .slice(0, 10 - worst10.length);
+    worst10 = worst10.concat(add);
+  }
+  if (worst10.length < 10) {
+    const add = worstSorted.filter(r => !worst10.includes(r))
+                          .slice(0, 10 - worst10.length);
+    worst10 = worst10.concat(add);
+  }
   const pct = (x) => (x==null ? "–" : (x*100).toFixed(2)+"%");
   const num = (x, d=2) => (x==null ? "–" : Number(x).toFixed(d));
   const int = (x) => (x==null ? "–" : new Intl.NumberFormat().format(Math.round(x)));
@@ -479,7 +926,20 @@ function combineAcrossPatches(allData, role) {
     {/* Header */}
     <div className="flex flex-wrap items-center gap-3">
       <Link className="text-sm text-blue-600 hover:underline" to="/">← Back</Link>
-      <h1 className="text-2xl font-semibold tracking-tight">{meta?.name || slug}</h1>
+      <div className="flex items-center gap-3">
+        <ChampionIcon
+          name={displayName}
+          version={ddVersion}
+          size={CHAMP_HEADER_ICON_SIZE}
+          className="shrink-0 shadow-sm"
+        />
+        <div className="leading-tight">
+          <div className="text-2xl font-bold text-neutral-100">{displayName}</div>
+          <div className="text-sm text-neutral-400">
+            {patch === "__ALL__" ? "All patches" : `Patch ${patch}`} • Role {role}
+          </div>
+        </div>
+      </div>
       <div className="ml-auto flex items-center gap-2">
         <label className="text-sm">Patch:</label>
         <select
@@ -521,6 +981,10 @@ function combineAcrossPatches(allData, role) {
       <Card dark label="Avg K/D/A" value={`${int(cur?.avgKills)} / ${int(cur?.avgDeaths)} / ${int(cur?.avgAssists)}`} />
       <Card dark label="KP" value={pct(cur?.avgKP)} />
     </section>
+    {/* Mastery split */}
+    {cur?.mastery && (
+      <MasteryTable mastery={cur.mastery} totalGames={cur.games} />
+    )}
 
     {/* Two-column content */}
     <section className="grid gap-4 lg:grid-cols-3">
@@ -601,39 +1065,53 @@ function combineAcrossPatches(allData, role) {
       </div>
     </section>
 
+    {/* Matchups */}
+    {(best10.length || worst10.length) ? (
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Matchups</h2>
+        <div className="grid gap-3 md:grid-cols-2">
+          <MatchupTable title="Best matchups (by TierScore)" rows={best10} />
+          <MatchupTable title="Worst matchups (by TierScore)" rows={worst10} />
+        </div>
+      </section>
+    ) : null}
+
     {/* Items */}
     <section className="space-y-4">
       <ItemTable title="Starter Items" rows={cur?.items?.starter || []} />
       {Array.isArray(cur?.items?.support) && cur.items.support.length > 0 && (
         <ItemTable title="Support Item" rows={cur.items.support} />
       )}
-      {/* Boots */}
+      {/* Boots (tiered) */}
       <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
         <div className="text-sm font-semibold mb-2">Boots</div>
-        {cur?.items?.boots?.footwear ? (
-          <div className="text-xs mb-2 text-neutral-300">
-            Magical Footwear: {pct0(cur.items.boots.footwear.share)} • Avg time {fmtTime(cur.items.boots.footwear.avg_time_s)}
-          </div>
-        ) : null}
-        <ItemTable title="Boots – Options" rows={cur?.items?.boots?.options || []} />
+
+        {cur?.items?.bootsTiered ? (
+          <>
+            <ItemTable title="Tier 1 Boots" rows={cur.items.bootsTiered.tier1 || []} />
+            <div className="h-3" />
+            <ItemTable title="Tier 2 Boots" rows={cur.items.bootsTiered.tier2 || []} />
+            <div className="h-3" />
+            <ItemTable title="Tier 3 Boots" rows={cur.items.bootsTiered.tier3 || []} />
+          </>
+        ) : (
+          // Fallback for older JSONs without bootsTiered
+          <>
+            {cur?.items?.boots?.footwear ? (
+              <div className="text-xs mb-2 text-neutral-300">
+                Magical Footwear: {pct0(cur.items.boots.footwear.share)} • Avg time {fmtTime(cur.items.boots.footwear.avg_time_s)}
+              </div>
+            ) : null}
+            <ItemTable title="Boots – Options" rows={cur?.items?.boots?.options || []} />
+          </>
+        )}
       </div>
 
       <ItemTable title="First 10 min Items" rows={cur?.items?.first10 || []} />
       <LegendaryTables data={cur?.items?.legendary || []} />
     </section>
 
-    {/* Opponents */}
-    <section className="bg-neutral-900 border border-neutral-800 rounded p-3">
-      <div className="text-sm font-semibold mb-2">Most played vs (Top 10)</div>
-      <ol className="text-sm grid sm:grid-cols-2 lg:grid-cols-3 gap-1 list-decimal list-inside">
-        {(cur?.topOpponents || []).slice(0,10).map((o,i)=>(
-          <li key={i} className="flex justify-between gap-2">
-            <span>{o.opponentChamp}</span>
-            <span className="text-neutral-400">{fmtInt(o.games)} games</span>
-          </li>
-        ))}
-      </ol>
-    </section>
+    
     </div>
   </div>
 );
@@ -794,10 +1272,47 @@ function Home() {
     })();
   }, [patch, patches]);
 
-  const currentRows = useMemo(() => {
-    if (!boards || !boards.roles) return [];
-    return (boards.roles[role] || []).filter(r => (r.games ?? 0) >= 100);
-  }, [boards, role]);
+  // Heavily games-weighted score
+function ebScore(p, n, mu, K = 800) {
+  // K=800 means ~equal weight at 800 games; increase K to weight games even more
+  return (n * (p ?? 0) + K * mu) / (n + K);
+}
+
+const currentRows = useMemo(() => {
+  if (!boards?.roles) return [];
+  const base = boards.roles[role] || [];
+
+  // global mean winrate (weighted by games)
+  const totalGames = base.reduce((s, r) => s + (r.games || 0), 0);
+  const totalWins  = base.reduce((s, r) => s + (r.games || 0) * (r.winRate || 0), 0);
+  const mu = totalGames ? totalWins / totalGames : 0.5;
+
+  // EB score (heavily games-weighted)
+  const K = 800; // ↑ to lean even more on games
+  const withScore = base.map(r => ({
+    ...r,
+    score: ( (r.games || 0) * (r.winRate || 0) + K * mu ) / ((r.games || 0) + K),
+  }));
+
+  // Build an index (0–100) & delta vs avg (pp)
+  const sMin = Math.min(...withScore.map(r => r.score ?? Infinity));
+  const sMax = Math.max(...withScore.map(r => r.score ?? -Infinity));
+  const span = (isFinite(sMin) && isFinite(sMax) && sMax > sMin) ? (sMax - sMin) : 1;
+
+  const scored = withScore.map(r => ({
+    ...r,
+    scoreIdx: Math.round(100 * ((r.score ?? mu) - sMin) / span),    // 0..100 index
+    scoreDeltaPP: ((r.score ?? mu) - mu) * 100,                      // +/- pp vs avg
+  }));
+
+  // optional floor by games
+  const filtered = scored.filter(r => (r.games || 0) >= 100);
+
+  // sort by EB score (not by the displayed index text)
+  filtered.sort((a, b) => (b.score - a.score) || (b.games - a.games));
+
+  return filtered;
+}, [boards, role]);
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
