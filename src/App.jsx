@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Routes, Route, Link, useParams, useSearchParams } from "react-router-dom";
-import {
-  ResponsiveContainer, AreaChart, Area, Line, XAxis, YAxis,
-  CartesianGrid, Tooltip, Legend, BarChart, Bar, PieChart, Pie, Cell
-} from "recharts";
+
+
 
 const BASE = import.meta.env.BASE_URL; // "/" in dev, "/StatCheck/" on GitHub Pages
 
@@ -24,6 +22,13 @@ const prettySpell = (s) => {
   return m[k] || s;
 };
 
+function normalizeRoleKey(r) {
+  if (!r) return r;
+  if (r === "MID") return "MIDDLE";
+  if (r === "SUPPORT") return "UTILITY";
+  return r;
+}
+
 // ---- DDragon helpers (icons) ----
 const DDRAGON_VER_FALLBACK = "15.18.1";
 const MF_ICON =
@@ -31,6 +36,7 @@ const MF_ICON =
 
 // --- Champion ID mapping (very forgiving) ---
 const CHAMP_ID_EXCEPT = {
+  "FiddleSticks": "Fiddlesticks",
   "Aurelion Sol": "AurelionSol",
   "Bel'Veth": "Belveth",
   "Cho'Gath": "Chogath",
@@ -199,6 +205,151 @@ function Card({ label, value, dark = false }) {
   );
 }
 
+const OTP_THRESH = 0.65; // 80%
+
+// Prefer exporter fields if present; otherwise derive
+// Prefer exporter fields if present; otherwise derive
+const getBestMasteryShare = (r) => {
+  if (!r) return null;
+
+  // exporter may already mark an OTP row
+  if (r.otp === true) return 1;
+
+  // explicit share from exporter or nested mastery block
+  if (r.bestMasteryShare != null) return Number(r.bestMasteryShare);
+  if (r?.mastery?.BestMastery?.share != null) return Number(r.mastery.BestMastery.share);
+
+  // derive from top-level counts (role-filtered leaderboard rows often have these)
+  const bestTop = r?.bestMasteryGames;
+  const total   = r?.games;
+  if (Number.isFinite(bestTop) && Number.isFinite(total) && total > 0) {
+    return bestTop / total;
+  }
+
+  // final fallback from nested counts if present
+  const bestNested = r?.mastery?.BestMastery?.games;
+  if (Number.isFinite(bestNested) && Number.isFinite(total) && total > 0) {
+    return bestNested / total;
+  }
+
+  return null;
+};
+
+// --- OTP share lazy fetch (per champ/role/patch) ---
+const _otpCache = new Map();
+
+function _parsePatchTuple(p) {
+  // "15.18" => [15,18], fallback to 0
+  if (!p) return [0,0,0];
+  const parts = String(p).split(".");
+  const nums = parts.map(x => (/^\d+$/.test(x) ? parseInt(x,10) : 0));
+  while (nums.length < 3) nums.push(0);
+  return nums.slice(0,3);
+}
+function useOtpShare(slug, patch, role) {
+  const [share, setShare] = useState(null);
+
+  useEffect(() => {    
+    if (!slug || !role || !patch) { setShare(null); return; }
+    const rKey = normalizeRoleKey(role);
+    const fileSlug = String(slug).toLowerCase();
+    let cancelled = false;
+    const key = `${fileSlug}|${patch}|${rKey}`;
+    if (_otpCache.has(key)) {
+      setShare(_otpCache.get(key));
+      return;
+    }
+    (async () => {
+      let s = null;
+      try {
+        const j = await getJSON(`${BASE}data/champions/${fileSlug}.json`, null);
+        const data = j?.data;
+        if (!data) { s = null; return; }
+
+        const pickShareFromRoleBucket = (bucket) => {
+          if (!bucket) return null;
+          if (bucket?.mastery?.BestMastery?.share != null) return Number(bucket.mastery.BestMastery.share);
+          // derive if games are present
+          const g = bucket?.games || 0;
+          const bestG = bucket?.mastery?.BestMastery?.games ?? bucket?.bestMasteryGames;
+          if (Number.isFinite(bestG) && g > 0) return bestG / g;
+          return null;
+        };
+
+        if (patch === "__ALL__") {
+          // Weight across all patches by games for this role
+          let best = 0, total = 0;
+          for (const [p, byRole] of Object.entries(data)) {
+            const bucket = byRole?.[rKey];
+            if (!bucket) continue;
+            const g = bucket?.games || 0;
+            const bestG = bucket?.mastery?.BestMastery?.games ?? bucket?.bestMasteryGames ?? Math.round((bucket?.mastery?.BestMastery?.share ?? 0) * g);
+            best += (bestG || 0);
+            total += g;
+          }
+          s = total > 0 ? best / total : null;
+        } else {
+          // exact patch, else nearest previous, else latest available
+          let bucket = data?.[patch]?.[rKey];
+          
+if (!bucket) {
+  // choose the closest patch that actually has this role bucket
+  const tgt = _parsePatchTuple(patch);
+  let bestKey = null;
+  let bestDist = Infinity;
+  for (const pKey of Object.keys(data)) {
+    const br = data?.[pKey]?.[role];
+    if (!br) continue;
+    const cand = _parsePatchTuple(pKey);
+    const dist = Math.abs(cand[0]-tgt[0]) * 10000 + Math.abs(cand[1]-tgt[1]) * 100 + Math.abs(cand[2]-tgt[2]);
+    if (dist < bestDist) { bestDist = dist; bestKey = pKey; }
+  }
+  bucket = bestKey ? data[bestKey][role] : null;
+}
+s = pickShareFromRoleBucket(bucket);
+        }
+      } catch (e) {
+        // ignore; keep s = null
+        console?.debug?.("OTP share fetch failed", slug, patch, role, e);
+      } finally {
+        if (!cancelled) {
+          _otpCache.set(key, s);
+          setShare(s);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [slug, patch, role]);
+
+  return share;
+}
+
+function OtpBadge({ slug, patch, role, exportShare, exportOtp, fallbackOtpFromAll }) {
+  const fetchedShare = useOtpShare(slug, patch, role);
+  // Prefer exporter provided share when it exists (e.g., ALL rows)
+  // pick the strongest signal:
+  //  - exporter 'otp' wins outright
+  //  - otherwise use the max of fetchedShare and exportShare (ignoring 0/NaN)
+  const shares = [];
+  if (typeof fetchedShare === "number" && !Number.isNaN(fetchedShare)) shares.push(fetchedShare);
+  if (typeof exportShare === "number" && exportShare > 0) shares.push(exportShare);
+  const share = shares.length ? Math.max(...shares) : null;
+
+  const isOTP =
+   exportOtp === true ||
+    fallbackOtpFromAll === true ||
+    (share != null && share >= OTP_THRESH);
+  if (!isOTP) return null;
+  const pct = share != null ? Math.round(share * 100) : null;
+  return (
+    <span
+      className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full border border-amber-500/60 bg-amber-500/10 text-amber-300"
+      title={pct != null ? `Best mastery players account for ${pct}% of games in this role` : "OTP"}
+    >
+      OTP
+    </span>
+  );
+}
 function Chart({title, children}) {
   return (
     <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded p-3 shadow-sm h-64">
@@ -208,25 +359,27 @@ function Chart({title, children}) {
   );
 }
 
-function LeaderboardTable({ rows }) {
+function LeaderboardTable({ rows, role, patch, otpFromAllBySlug }) {
   // Ban% fix: divide source value by 10 before turning to %
   const fmtBan   = x => (x == null ? "–" : ((x / 10) * 100).toFixed(2) + "%");
   const fmtPick  = x => (x == null ? "–" : (x * 100).toFixed(2) + "%");
   const fmtKDA   = x => (x == null ? "–" : (x * 10).toFixed(2));
   const fmt1     = x => (x == null ? "–" : Number(x).toFixed(1));
-  const fmt2     = x => (x == null ? "–" : Number(x).toFixed(2));
-  const fmtInt   = n => (n == null ? "–" : new Intl.NumberFormat().format(n));
   const fmtCS10  = x => (x == null ? "–" : Number(x).toFixed(2));
   const fmtCSD10 = x => (x == null ? "–" : Number(x).toFixed(2));
-  const ddVersion = useDdragonVersion();
-  const CHAMP_ICON_SIZE = 40; // try 28–32
+  const fmtInt   = n => (n == null ? "–" : new Intl.NumberFormat().format(n));
 
+  const ddVersion = useDdragonVersion();
+  const CHAMP_ICON_SIZE = 40;
+  const [search, setSearch] = useState("");
+
+  // friendlier grade cutoffs (more S/A)
   const gradeFromIdx = (idx = 0) => {
-  if (idx >= 90) return "S";
-  if (idx >= 75) return "A";
-  if (idx >= 60) return "B";
-  if (idx >= 40) return "C";
-  return "D";
+    if (idx >= 85) return "S";
+    if (idx >= 70) return "A";
+    if (idx >= 55) return "B";
+    if (idx >= 35) return "C";
+    return "D";
   };
   const gradeClass = (g) => ({
     S: "bg-emerald-900/30 border-emerald-700 text-emerald-300",
@@ -237,68 +390,89 @@ function LeaderboardTable({ rows }) {
   }[g] || "bg-neutral-800 border-neutral-700 text-neutral-200");
 
   const COLUMNS = [
-  { key: "tier", label: "Tier", align: "left", accessor: r => r.score, // sort by EB score
-    render: r => {
-      const g = gradeFromIdx(r.scoreIdx);
-      return (
-        <div className="flex items-center gap-3">
-          <span className={`text-xs px-2 py-0.5 rounded border ${gradeClass(g)}`}>{g}</span>
-          <div className="w-20 h-2 rounded bg-neutral-800 overflow-hidden">
-            <div
-              className="h-2 bg-blue-500"
-              style={{ width: `${Math.max(0, Math.min(100, r.scoreIdx ?? 0))}%` }}
-            />
+    {
+      key: "tier", label: "Tier", align: "left", accessor: r => r.score, // sort by EB score
+      render: r => {
+        const g = gradeFromIdx(r.scoreIdx);
+        const idx = Math.max(0, Math.min(100, r.scoreIdx ?? 0));
+        return (
+          <div className="flex items-center gap-3">
+            <span className={`text-xs px-2 py-0.5 rounded border ${gradeClass(g)}`}>{g}</span>
+            <div className="w-20 h-2 rounded bg-neutral-800 overflow-hidden">
+              <div className="h-2 bg-blue-500" style={{ width: `${idx}%` }} />
+            </div>
+            <span
+              className="text-xs px-2 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-200"
+              title="Games-weighted rank (0–100). Higher = better; heavily favors more games."
+            >
+              TierScore {idx}
+            </span>
           </div>
-          {(() => {
-            const idx = Math.max(0, Math.min(100, r.scoreIdx ?? 0));
-            return (
-              <span
-                className="text-xs px-2 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-200"
-                title="Games-weighted rank (0–100). Higher = better; heavily favors more games."
-              >
-                TierScore {idx}
-              </span>
-            );
-          })()}
-        </div>
-      );
+        );
+      },
+      sortable: true
     },
-    sortable: true
-  },
-    { key: "champ", label: "Champion", align: "left", accessor: r => r.champion,
-      render: r => (
-        <Link
-          className="text-blue-600 hover:underline"
-          to={`/champions/${r.championSlug || r.champion?.toLowerCase?.().replace(/[^a-z0-9]+/g,"")}`}
-        >
-          <span className="inline-flex items-center gap-3">
-            <ChampionIcon name={r.champion} version={ddVersion} size={CHAMP_ICON_SIZE} className="shrink-0" />
-            <span className="text-[15px]">{r.champion}</span>
-          </span>
-        </Link>
-      ),
+    {
+      key: "champ", label: "Champion", align: "left",
+      render: r => {
+        const share = getBestMasteryShare(r);        
+
+        return (
+          <Link
+            className="text-blue-600 hover:underline"
+            to={`/champions/${r.championSlug || r.champion?.toLowerCase?.().replace(/[^a-z0-9]+/g,"")}`}
+          >
+            <span className="inline-flex items-center gap-2">
+              <ChampionIcon name={r.champion} version={ddVersion} size={CHAMP_ICON_SIZE} className="shrink-0" />
+              <span className="text-[15px]">{r.champion}</span>
+              <OtpBadge
+                slug={r.championSlug || r.champion?.toLowerCase?.().replace(/[^a-z0-9]+/g,"")}
+                patch={patch}
+                role={role}
+                exportShare={getBestMasteryShare(r)}  
+                exportOtp={r.otp}
+                fallbackOtpFromAll={
+                  !!otpFromAllBySlug?.[
+                    r.championSlug ||
+                    r.champion?.toLowerCase?.().replace(/[^a-z0-9]+/g, "")
+                  ]
+                }
+              />
+            </span>
+          </Link>
+        );
+      },
     },
-    { key: "games", label: "Games", align: "right", accessor: r => r.games, render: r => fmtInt(r.games), sortable: true  },
-    { key: "win",   label: "Win%",  align: "right", accessor: r => r.winRate, render: r => fmtPct(r.winRate), sortable: true  },
-    { key: "pick",  label: "Pick%", align: "right", accessor: r => r.pickRate, render: r => fmtPick(r.pickRate), sortable: true },
-    { key: "uban",  label: "Unique Ban%", align: "right", accessor: r => r.banRateUnique, render: r => fmtBan(r.banRateUnique), sortable: true  },
-    { key: "ban",   label: "Ban%",        align: "right", accessor: r => r.banRate,        render: r => fmtBan(r.banRate),        sortable: true  },       
-    { key: "kda",   label: "KDA",   align: "right", accessor: r => r.kdaAvg,           render: r => fmtKDA(r.kdaAvg),             sortable: true  },
-    { key: "gd5",   label: "GD@5",  align: "right", accessor: r => r.goldDiffAt5Avg,   render: r => fmt1(r.goldDiffAt5Avg),       sortable: true  },
-    { key: "gd10",  label: "GD@10", align: "right", accessor: r => r.goldDiffAt10Avg,  render: r => fmt1(r.goldDiffAt10Avg),      sortable: true  },
-    { key: "cs10",  label: "CS@10", align: "right", accessor: r => r.csAt10Avg,        render: r => fmtCS10(r.csAt10Avg),         sortable: true  },
-    { key: "csd10", label: "CSD@10",align: "right", accessor: r => r.csDiffAt10Avg,    render: r => fmtCSD10(r.csDiffAt10Avg),    sortable: true  },
-    { key: "dpm",   label: "DPM",   align: "right", accessor: r => r.dpmAvg,           render: r => fmt1(r.dpmAvg),               sortable: true  },
-    { key: "kp",    label: "KP",    align: "right", accessor: r => r.kpAvg,            render: r => fmtPct(r.kpAvg),              sortable: true  },
+    { key: "games", label: "Games", align: "right", accessor: r => r.games,                render: r => fmtInt(r.games),        sortable: true },
+    { key: "win",   label: "Win%",  align: "right", accessor: r => r.winRate,              render: r => (r.winRate==null?"–":(r.winRate*100).toFixed(2)+"%"), sortable: true },
+    { key: "pick",  label: "Pick%", align: "right", accessor: r => r.pickRate,             render: r => fmtPick(r.pickRate),    sortable: true },
+    { key: "uban",  label: "Unique Ban%", align: "right", accessor: r => r.banRateUnique,  render: r => fmtBan(r.banRateUnique),sortable: true },
+    { key: "ban",   label: "Ban%",        align: "right", accessor: r => r.banRate,       render: r => fmtBan(r.banRate),      sortable: true },
+    { key: "kda",   label: "KDA",   align: "right", accessor: r => r.kdaAvg,               render: r => fmtKDA(r.kdaAvg),       sortable: true },
+    { key: "gd5",   label: "GD@5",  align: "right", accessor: r => r.goldDiffAt5Avg,       render: r => fmt1(r.goldDiffAt5Avg), sortable: true },
+    { key: "gd10",  label: "GD@10", align: "right", accessor: r => r.goldDiffAt10Avg,      render: r => fmt1(r.goldDiffAt10Avg),sortable: true },
+    { key: "cs10",  label: "CS@10", align: "right", accessor: r => r.csAt10Avg,            render: r => fmtCS10(r.csAt10Avg),   sortable: true },
+    { key: "csd10", label: "CSD@10",align: "right", accessor: r => r.csDiffAt10Avg,        render: r => fmtCSD10(r.csDiffAt10Avg), sortable: true },
+    { key: "dpm",   label: "DPM",   align: "right", accessor: r => r.dpmAvg,               render: r => fmt1(r.dpmAvg),         sortable: true },
+    { key: "kp",    label: "KP",    align: "right", accessor: r => r.kpAvg,                render: r => (r.kpAvg==null?"–":(r.kpAvg*100).toFixed(2)+"%"), sortable: true },
   ];
 
-  const [sortKey, setSortKey] = useState("pick");
+  const [sortKey, setSortKey] = useState("tier");
   const [sortDir, setSortDir] = useState("desc");
 
+  // filter by search
+  const filteredRows = useMemo(() => {
+    const base = Array.isArray(rows) ? rows : [];
+    if (!search.trim()) return base;
+    const q = search.toLowerCase();
+    return base.filter(r => (r.champion || "").toLowerCase().includes(q));
+  }, [rows, search]);
+
+  // sort
   const sortedRows = useMemo(() => {
     const col = COLUMNS.find(c => c.key === sortKey);
-    if (!col) return rows || [];
-    const arr = [...(rows || [])];
+    if (!col) return filteredRows || [];
+    const arr = [...(filteredRows || [])];
     arr.sort((a,b) => {
       const A = col.accessor(a, 0);
       const B = col.accessor(b, 0);
@@ -311,50 +485,69 @@ function LeaderboardTable({ rows }) {
       return (a.champion || "").localeCompare(b.champion || "");
     });
     return arr;
-  }, [rows, sortKey, sortDir]);
+  }, [filteredRows, sortKey, sortDir]);
 
   const onSort = (key) => {
     if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("desc"); }
   };
-
   const sortIcon = (key) => (key !== sortKey ? <span className="opacity-30">↕</span> : (sortDir === "asc" ? <span>▲</span> : <span>▼</span>));
 
+  // ---- UI ----
   return (
-    <div className="overflow-x-auto bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded">
-      <table className="min-w-full text-sm">
-        <thead className="bg-neutral-50 dark:bg-neutral-800/50">
-          <tr className="text-left">
-            {COLUMNS.map((c) => (
-              <th
-                key={c.key}
-                className={`px-3 py-2 font-medium select-none ${c.align === "right" ? "text-right" : ""} ${c.sortable ? "cursor-pointer hover:underline" : ""}`}
-                onClick={c.sortable ? () => onSort(c.key) : undefined}
-                title={c.sortable ? "Click to sort" : undefined}
-              >
-                <span className="inline-flex items-center gap-1">
-                  {c.label} {c.sortable && sortIcon(c.key)}
-                </span>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {sortedRows.map((r, i) => (
-            <tr
-              key={r.champion + "_" + i}
-              className="border-t border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800/40"
-            >
-              {COLUMNS.map((c) => (
-                <td key={c.key} className={`px-3 py-2 tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
-                  {c.render ? c.render(r, i) : (r[c.key] ?? "")}
-                </td>
+    <section className="max-w-6xl mx-auto w-full px-3">
+      {/* Search bar */}
+      <div className="p-2">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search champion..."
+          className="px-3 py-1.5 border rounded text-sm w-60
+                     bg-white dark:bg-neutral-800
+                     border-neutral-300 dark:border-neutral-700
+                     text-neutral-900 dark:text-neutral-100"
+        />
+      </div>
+
+      {/* Table wrapper */}
+      <div className="mt-2 w-full overflow-x-auto">
+        <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded">
+          <table className="min-w-full text-sm">
+            <thead className="bg-neutral-50 dark:bg-neutral-800/50">
+              <tr className="text-left">
+                {COLUMNS.map((c) => (
+                  <th
+                    key={c.key}
+                    className={`px-3 py-2 font-medium select-none ${c.align === "right" ? "text-right" : ""} ${c.sortable ? "cursor-pointer hover:underline" : ""}`}
+                    onClick={c.sortable ? () => onSort(c.key) : undefined}
+                    title={c.sortable ? "Click to sort" : undefined}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {c.label} {c.sortable && sortIcon(c.key)}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRows.map((r, i) => (
+                <tr
+                  key={r.champion + "_" + i}
+                  className="border-t border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800/40"
+                >
+                  {COLUMNS.map((c) => (
+                    <td key={c.key} className={`px-3 py-2 tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
+                      {c.render ? c.render(r, i) : (r[c.key] ?? "")}
+                    </td>
+                  ))}
+                </tr>
               ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -376,20 +569,42 @@ function ChampionPage() {
   const ITEM_ICON_SIZE = 40; // try 28 or 32 if you want larger  
   const toPct = (x) => x == null ? "–" : `${(x*100).toFixed(1)}%`;
 
+
   // --- Mastery split (Best/Best2/Best3/Top5/BelowTop5) ---
-  const MasteryTable = ({ mastery, totalGames }) => {
+  const MasteryTable = ({ mastery }) => {
     if (!mastery) return null;
 
+    // Column headers (unchanged)
     const headers = [
-      ["BestMastery",     "Best Mastery"],
-      ["Best2Mastery",    "Best 2 Mastery"],
-      ["Best3Mastery",    "Best 3 Mastery"],
-      ["BestTop5Mastery", "Best Top 5 Mastery"],
-      ["BelowTop5Mastery","Below Top 5 Mastery"],
+      ["BestMastery",     "Best"],
+      ["Best2Mastery",    "Best 2"],
+      ["Best3Mastery",    "Best 3"],
+      ["BestTop5Mastery", "Top 5"],
+      ["BelowTop5Mastery","Below 5"],
     ];
 
-    const toPct0 = (x) => x == null ? "–" : `${(x*100).toFixed(0)}%`;
-    const toPct1 = (x) => x == null ? "–" : `${(x*100).toFixed(1)}%`;
+    const pct0 = (x) => (x == null ? "–" : `${(x * 100).toFixed(0)}%`);
+    const pct1 = (x) => (x == null ? "–" : `${(x * 100).toFixed(1)}%`);
+
+    // Totals for shares
+    const totalGames = headers.reduce((s, [k]) => s + (mastery?.[k]?.games || 0), 0);
+
+    // "Total mastery" = sum over buckets of (avgChampMasteryPer * games)
+    // Note: avgChampMasteryPer is a FRACTION (e.g., 0.050529 for 5.0529%)
+    const totalMasteryWeight = headers.reduce((s, [k]) => {
+      const m = mastery?.[k];
+      const avg = m?.avgChampMasteryPer ?? 0;   // treat missing as 0
+      const g   = m?.games || 0;
+      return s + avg * g;
+    }, 0);
+
+    // Render helper
+    const cells = (renderFn) =>
+      headers.map(([key]) => (
+        <td key={key} className="px-2 py-1 tabular-nums text-right">
+          {renderFn(mastery?.[key], key)}
+        </td>
+      ));
 
     return (
       <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
@@ -398,42 +613,40 @@ function ChampionPage() {
           <table className="min-w-full text-sm">
             <thead className="text-left text-neutral-300">
               <tr>
+                <th className="px-2 py-1"></th>
                 {headers.map(([key, label]) => (
-                  <th key={key} className="px-2 py-1">{label}</th>
+                  <th key={key} className="px-2 py-1 text-right">{label}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {/* Winrate row */}
+              {/* Row 1: Win rate (WR) */}
               <tr className="border-t border-neutral-800">
-                {headers.map(([key]) => (
-                  <td key={key} className="px-2 py-1 tabular-nums">
-                    {toPct1(mastery?.[key]?.winRate)}
-                  </td>
-                ))}
+                <td className="px-2 py-1 text-neutral-400">WR</td>
+                {cells((m) => pct1(m?.winRate))}
               </tr>
-              {/* Share row */}
+
+              {/* Row 2: % of total games (Games%) */}
               <tr className="border-t border-neutral-800">
-                {headers.map(([key]) => (
-                  <td key={key} className="px-2 py-1 tabular-nums">
-                    {toPct0(mastery?.[key]?.share)}
-                    {typeof mastery?.[key]?.games === "number" && (
-                      <span className="opacity-60"> · {new Intl.NumberFormat().format(mastery[key].games)} games</span>
-                    )}
-                  </td>
-                ))}
+                <td className="px-2 py-1 text-neutral-400">Games%</td>
+                {cells((m) => {
+                  const g = m?.games || 0;
+                  return totalGames ? `${((g / totalGames) * 100).toFixed(0)}%` : "–";
+                })}
               </tr>
-              {/* Avg ChampMasteryPer row (not shown for BelowTop5Mastery) */}
+
+              {/* Row 3: % of total mastery (Mastery%) */}
               <tr className="border-t border-neutral-800">
-                {headers.map(([key]) => (
-                  <td key={key} className="px-2 py-1 tabular-nums">
-                    {key === "BelowTop5Mastery"
-                      ? "–"
-                      : (mastery?.[key]?.avgChampMasteryPer == null
-                          ? "–"
-                          : Number(mastery[key].avgChampMasteryPer).toFixed(0))}
-                  </td>
-                ))}
+                <td className="px-2 py-1 text-neutral-400">Mastery%</td>
+                {cells((m, key) => {
+                  // BelowTop5 may not have avgChampMasteryPer; treat missing as 0
+                  const avg = m?.avgChampMasteryPer ?? 0;   // fraction
+                  const g   = m?.games || 0;
+                  const weight = avg * g;
+                  return totalMasteryWeight
+                    ? `${((weight / totalMasteryWeight) * 100).toFixed(0)}%`
+                    : "–";
+                })}
               </tr>
             </tbody>
           </table>
@@ -584,11 +797,11 @@ function combineAcrossPatches(allData, role) {
     teamFBTowerRate_num: 0, teamFBTowerRate_den: 0,
     opponents: {},
     mastery: {
-      BestMastery:       { games: 0, wins: 0, sum: 0, cnt: 0 },
-      Best2Mastery:      { games: 0, wins: 0, sum: 0, cnt: 0 },
-      Best3Mastery:      { games: 0, wins: 0, sum: 0, cnt: 0 },
-      BestTop5Mastery:   { games: 0, wins: 0, sum: 0, cnt: 0 },
-      BelowTop5Mastery:  { games: 0, wins: 0, sum: 0, cnt: 0 }, // sum/cnt unused
+      BestMastery:       { games: 0, wins: 0, sumAvg: 0, denAvg: 0 },
+      Best2Mastery:      { games: 0, wins: 0, sumAvg: 0, denAvg: 0 },
+      Best3Mastery:      { games: 0, wins: 0, sumAvg: 0, denAvg: 0 },
+      BestTop5Mastery:   { games: 0, wins: 0, sumAvg: 0, denAvg: 0 },
+      BelowTop5Mastery:  { games: 0, wins: 0, sumAvg: 0, denAvg: 0 }, // avg not shown later
     },
     shardsGrid: [ {}, {}, {} ],
     summonerCombos: {},
@@ -619,17 +832,18 @@ function combineAcrossPatches(allData, role) {
     if (r.teamFBTowerRate!=null && g) { acc.teamFBTowerRate_num += r.teamFBTowerRate*g; acc.teamFBTowerRate_den += g; }
 
     // mastery buckets
-    if (pr.mastery) {
+    if (r.mastery) {
       for (const key of Object.keys(acc.mastery)) {
-        const mm = pr.mastery[key];
+        const mm = r.mastery[key];
         if (!mm) continue;
-        const g = mm.games || 0;
-        const wr = mm.winRate == null ? null : Number(mm.winRate);
-        const avg = m.avgChampMasteryPer == null ? "–" : m.avgChampMasteryPer.toFixed(1)
-
-        acc.mastery[key].games += g;
-        if (wr != null) acc.mastery[key].wins += Math.round(wr * g);
-        if (avg != null && g > 0) { acc.mastery[key].sumAvg += avg * g; acc.mastery[key].denAvg += g; }
+        const g2 = mm.games || 0;
+        acc.mastery[key].games += g2;
+        acc.mastery[key].wins  += (mm.wins || 0);
+        if (mm.avgChampMasteryPer != null) {
+          // accumulate for a weighted average
+          acc.mastery[key].sumAvg = (acc.mastery[key].sumAvg || 0) + Number(mm.avgChampMasteryPer) * g2;
+          acc.mastery[key].denAvg = (acc.mastery[key].denAvg || 0) + g2;
+        }
       }
     }
     // Opponents (games + wins)
@@ -812,14 +1026,34 @@ function combineAcrossPatches(allData, role) {
     return data[patch]?.[role] || null;
   }, [data, patch, role]);
 
+  // Safe defaults so "__ALL__" never crashes if a section is missing
+  const C = useMemo(() => ({
+    games: 0,
+    wins: 0,
+    winRate: null,
+
+    // sections that are often missing in "__ALL__" until exporter/UI are aligned
+    opponents: [],
+    mastery: null,
+    items: {},                 // { starter, support, boots:{tier1,tier2,footwear}, first10min, legendary:{...} }
+    shardsGrid: [[], [], []],  // 3 rows
+
+    ...(cur || {})
+  }), [cur]);
   // --- MATCHUPS: compute EB score (heavily games-weighted) ---
-  function matchupScore(wins, games, prior = (cur?.winRate ?? 0.5), K = 800) {
+  function matchupScore(wins, games, prior = (C.winRate ?? 0.5), K = 2000) {
     const alpha = prior * K, beta = (1 - prior) * K;
     return (wins + alpha) / (games + alpha + beta);
   }
 
   // require real opponent data; skip if we don't have wins nor winRate
-  const rawOpp = Array.isArray(cur?.opponents) ? cur.opponents : [];
+  const rawOpp =
+    Array.isArray(C?.opponents) ? C.opponents :
+    Array.isArray(C?.topOpponents) ? C.topOpponents.map(o => ({
+      opponentChamp: o.opponentChamp,
+      games: o.games,
+      wins: Math.round((C?.winRate ?? 0.5) * (o.games || 0)),
+    })) : [];
 
   // normalize rows and compute score
   const scoredOpp = rawOpp
@@ -842,14 +1076,6 @@ function combineAcrossPatches(allData, role) {
     vsIdx: Math.round(100 * (x.vsScore - sMin) / span)
   }));
 
-  // grading like the leaderboard
-  const gradeFromIdx = (idx = 0) => {
-    if (idx >= 90) return "S";
-    if (idx >= 75) return "A";
-    if (idx >= 60) return "B";
-    if (idx >= 40) return "C";
-    return "D";
-  };
 
   // order: Best by score desc; Worst by score asc
   const best10  = [...withIdx].sort((a,b) => (b.vsScore - a.vsScore) || (b.games - a.games)).slice(0, 10);
@@ -934,7 +1160,21 @@ function combineAcrossPatches(allData, role) {
           className="shrink-0 shadow-sm"
         />
         <div className="leading-tight">
-          <div className="text-2xl font-bold text-neutral-100">{displayName}</div>
+          <div className="text-2xl font-bold text-neutral-100 inline-flex items-center gap-2">
+           {displayName}
+           {(() => {
+             const share = cur?.mastery?.BestMastery?.share; // fraction 0..1 in current role
+             const isOTP = share != null && share >= OTP_THRESH;
+             return isOTP ? (
+               <span
+                 className="text-[11px] px-1.5 py-0.5 rounded-full border border-amber-500/60 bg-amber-500/10 text-amber-300"
+                 title={`Best mastery players account for ${(share*100).toFixed(0)}% of games in this role`}
+               >
+                 OTP
+               </span>
+             ) : null;
+           })()}
+         </div>
           <div className="text-sm text-neutral-400">
             {patch === "__ALL__" ? "All patches" : `Patch ${patch}`} • Role {role}
           </div>
@@ -1152,6 +1392,7 @@ function Home() {
               champion: r.champion,
               championSlug: key,
               games: 0,
+              best_mastery_games_sum: 0,
               // numerators for weighted metrics
               wins_sum: 0,
               kda_sum: 0,
@@ -1169,6 +1410,7 @@ function Home() {
 
           const g = r.games || 0;
           acc.games += g;
+          acc.best_mastery_games_sum += (r.bestMasteryGames || 0);
           acc.wins_sum += (r.winRate != null ? r.winRate : 0) * g;
           acc.kda_sum  += (r.kdaAvg  != null ? r.kdaAvg  : 0) * g;
           acc.gd5_sum  += (r.goldDiffAt5Avg  ?? 0) * g;
@@ -1192,10 +1434,15 @@ function Home() {
     for (const role of Object.keys(rolesMap)) {
       const arr = Object.values(rolesMap[role]).map(acc => {
         const g = acc.games || 0;
+        const bestG = acc.best_mastery_games_sum || 0;        
+        const bestShare = g ? bestG / g : 0; 
         return {
           champion: acc.champion,
           championSlug: acc.championSlug,
           games: g,
+          bestMasteryGames: acc.best_mastery_games_sum,             
+          bestMasteryShare: g ? acc.best_mastery_games_sum / g : 0,
+          otp: bestShare >= OTP_THRESH, 
           winRate: g ? acc.wins_sum / g : null,
           kdaAvg:  g ? acc.kda_sum  / g : null,
           goldDiffAt5Avg:  g ? acc.gd5_sum  / g : null,
@@ -1243,6 +1490,17 @@ function Home() {
   const [boards, setBoards] = useState(null);
   const [loadingBoards, setLoadingBoards] = useState(true);
 
+  const otpFromAllBySlug = useMemo(() => {
+    const map = Object.create(null);
+    const allRows = boards?.roles?.ALL || [];
+    for (const r of allRows) {
+      const share = getBestMasteryShare(r);
+      const isOtp = r?.otp === true || (share != null && share >= OTP_THRESH);
+      if (isOtp && r?.championSlug) map[r.championSlug] = true;
+    }
+    return map;
+  }, [boards]);
+
   useEffect(() => {
     (async () => {
       const idx = await getJSON(`${BASE}data/leaderboards_index.json`, { patches: [], roles: [] });
@@ -1272,45 +1530,33 @@ function Home() {
     })();
   }, [patch, patches]);
 
-  // Heavily games-weighted score
-function ebScore(p, n, mu, K = 800) {
-  // K=800 means ~equal weight at 800 games; increase K to weight games even more
-  return (n * (p ?? 0) + K * mu) / (n + K);
-}
 
 const currentRows = useMemo(() => {
   if (!boards?.roles) return [];
   const base = boards.roles[role] || [];
 
-  // global mean winrate (weighted by games)
   const totalGames = base.reduce((s, r) => s + (r.games || 0), 0);
   const totalWins  = base.reduce((s, r) => s + (r.games || 0) * (r.winRate || 0), 0);
   const mu = totalGames ? totalWins / totalGames : 0.5;
 
-  // EB score (heavily games-weighted)
-  const K = 800; // ↑ to lean even more on games
+  const K = 2000;
   const withScore = base.map(r => ({
     ...r,
     score: ( (r.games || 0) * (r.winRate || 0) + K * mu ) / ((r.games || 0) + K),
   }));
 
-  // Build an index (0–100) & delta vs avg (pp)
   const sMin = Math.min(...withScore.map(r => r.score ?? Infinity));
   const sMax = Math.max(...withScore.map(r => r.score ?? -Infinity));
   const span = (isFinite(sMin) && isFinite(sMax) && sMax > sMin) ? (sMax - sMin) : 1;
 
   const scored = withScore.map(r => ({
     ...r,
-    scoreIdx: Math.round(100 * ((r.score ?? mu) - sMin) / span),    // 0..100 index
-    scoreDeltaPP: ((r.score ?? mu) - mu) * 100,                      // +/- pp vs avg
+    scoreIdx: Math.round(100 * ((r.score ?? mu) - sMin) / span),
+    scoreDeltaPP: ((r.score ?? mu) - mu) * 100,
   }));
 
-  // optional floor by games
   const filtered = scored.filter(r => (r.games || 0) >= 100);
-
-  // sort by EB score (not by the displayed index text)
   filtered.sort((a, b) => (b.score - a.score) || (b.games - a.games));
-
   return filtered;
 }, [boards, role]);
 
@@ -1325,86 +1571,27 @@ const currentRows = useMemo(() => {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-8">
-        {/* KPI cards */}
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card label="Games" value={kpi ? fmtInt(kpi.games) : "–"} />
-          <Card label="Unique Players" value={kpi ? fmtInt(kpi.uniquePlayers) : "–"} />
-          <Card label="Unique Champions" value={kpi ? fmtInt(kpi.uniqueChampions) : "–"} />
-          <Card label="Avg Game Length" value={kpi ? (kpi.avgGameLengthMin.toFixed(1) + "m") : "–"} />
-        </section>
+      {/* --- Leaderboards --- */}
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-lg font-semibold">Leaderboards</h2>
+          <label className="text-sm">Patch:</label>
+          <select className="border rounded px-2 py-1 bg-neutral-900 border-neutral-800" value={patch} onChange={e=>setPatch(e.target.value)}>
+            <option value="__ALL__">All patches</option>
+            {(patches || []).map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
 
-        {/* charts */}
-        <section className="grid gap-4 lg:grid-cols-3">
-          <Chart title="Games & Players over Time">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trend || []} margin={{ top: 8, right: 12, bottom: 0, left: -20 }}>
-                <defs>
-                  <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.35}/>
-                    <stop offset="95%" stopColor="#60a5fa" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Area type="monotone" dataKey="games" stroke="#60a5fa" fill="url(#g1)" strokeWidth={2} />
-                <Line type="monotone" dataKey="players" stroke="#34d399" strokeWidth={2} dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </Chart>
+          <label className="text-sm ml-2">Role:</label>
+          <select className="bg-neutral-900 text-neutral-100 border border-neutral-700 rounded p-2" value={role} onChange={e=>setRole(e.target.value)}>
+            {roles.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
 
-          <Chart title="Top 5 — Pick Rate">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={top5} margin={{ top: 8, right: 12, bottom: 0, left: -20 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="champion" />
-                <YAxis tickFormatter={v => (v*100).toFixed(0) + "%"} />
-                <Tooltip formatter={v => fmtPct(v)} />
-                <Bar dataKey="pickRate">
-                  {top5.map((_, i) => <Cell key={i} fill={["#60a5fa","#34d399","#fbbf24","#f472b6","#a78bfa"][i%5]} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </Chart>
+        <div className="text-sm text-neutral-500">{loadingBoards ? "Loading…" : `${currentRows.length} champions`}</div>
 
-          <Chart title="Winrate Share (Top 5)">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie dataKey="winRate" data={top5} nameKey="champion" cx="50%" cy="50%" outerRadius={80}>
-                  {top5.map((_, i) => <Cell key={i} fill={["#60a5fa","#34d399","#fbbf24","#f472b6","#a78bfa"][i%5]} />)}
-                </Pie>
-                <Tooltip formatter={v => fmtPct(v)} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          </Chart>
-        </section>
-
-        {/* --- Leaderboards --- */}
-        <section className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-lg font-semibold">Leaderboards</h2>
-            {/* patch selector */}
-            <label className="text-sm">Patch:</label>
-            <select className="border rounded px-2 py-1 bg-neutral-900 border-neutral-800" value={patch} onChange={e=>setPatch(e.target.value)}>
-              <option value="__ALL__">All patches</option>
-              {(patches || []).map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-
-            {/* role selector */}
-            <label className="text-sm ml-2">Role:</label>
-            <select className="bg-neutral-900 text-neutral-100 border border-neutral-700 rounded p-2" value={role} onChange={e=>setRole(e.target.value)}>
-              {roles.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </div>
-
-          <div className="text-sm text-neutral-500">{loadingBoards ? "Loading…" : `${currentRows.length} champions`}</div>
-
-          <LeaderboardTable rows={currentRows} />
-        </section>
-      </main>
+        <LeaderboardTable rows={currentRows} role={role} patch={patch} otpFromAllBySlug={otpFromAllBySlug} />
+      </section>
+    </main>
     </div>
   );
 }
