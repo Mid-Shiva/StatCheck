@@ -134,6 +134,46 @@ function ChampionIcon({ name, version, size = 20, className = "" }) {
   );
 }
 
+// Build Map<runeName, absoluteIconUrl> from runesReforged.json
+function useRunesIndex(version) {
+  const [idx, setIdx] = useState(null);
+
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        // This file isn't versioned by path for images, but we read the data by version anyway
+        const url = `https://ddragon.leagueoflegends.com/cdn/${version}/data/en_US/runesReforged.json`;
+        const res = await fetch(url, { cache: "force-cache" });
+        const trees = await res.json();
+
+        // Flatten all runes across all trees & slots
+        const map = new Map();
+        for (const tree of trees || []) {
+          for (const slot of tree.slots || []) {
+            for (const r of slot.runes || []) {
+              // r.name (e.g. "Press the Attack"), r.icon (e.g. "perk-images/Styles/Precision/PressTheAttack/PressTheAttack.png")
+              const name = r?.name;
+              const icon = r?.icon;
+              if (!name || !icon) continue;
+
+              // rune images live under /cdn/img/, not /cdn/<ver>/
+              const full = `https://ddragon.leagueoflegends.com/cdn/img/${icon.replace(/^\/?/, "")}`;
+              if (!map.has(name)) map.set(name, full);
+            }
+          }
+        }
+        if (!ignore) setIdx(map);
+      } catch {
+        if (!ignore) setIdx(null);
+      }
+    })();
+    return () => { ignore = true; };
+  }, [version]);
+
+  return idx;
+}
+
 // Map normalized item name → numeric id (e.g. "platedsteelcaps" -> "3047")
 function useItemIndex(version) {
   const [idx, setIdx] = useState(null);
@@ -178,6 +218,225 @@ function ItemIcon({ name, version, itemIndex, size = 20, className = "" }) {
   return <div className={`w-[${size}px] h-[${size}px] rounded bg-neutral-800 grid place-items-center text-[10px] text-neutral-300 ${className}`}>{initials}</div>;
 }
 
+function SpellIcon({ name, version, size = 22, className = "" }) {
+  if (!name) return null;
+  const map = {
+    Flash: "SummonerFlash",
+    Ignite: "SummonerDot",
+    Teleport: "SummonerTeleport",
+    Ghost: "SummonerHaste",
+    Cleanse: "SummonerBoost",
+    Barrier: "SummonerBarrier",
+    Heal: "SummonerHeal",
+    Exhaust: "SummonerExhaust",
+    Smite: "SummonerSmite",
+  };
+  const id = map[prettySpell(name)];
+  if (!id) return <span className={`inline-block w-[${size}px] h-[${size}px] rounded bg-neutral-800 ${className}`} />;
+  const src = `https://ddragon.leagueoflegends.com/cdn/${version}/img/spell/${id}.png`;
+  return <img src={src} alt={name} width={size} height={size} className={`rounded ${className}`} loading="lazy" />;
+}
+
+
+function RuneKeystoneIcon({ keystone, version, size = 32, className = "" }) {
+  if (!keystone) return null;
+
+  // optional generic fallback badge by path (nice to keep)
+  const KEYSTONE_TO_PATH = {
+    "Press the Attack": "Precision", "Lethal Tempo": "Precision",
+    "Fleet Footwork": "Precision",  "Conqueror": "Precision",
+    "Electrocute": "Domination", "Predator": "Domination",
+    "Hail of Blades": "Domination", "Dark Harvest": "Domination",
+    "Summon Aery": "Sorcery", "Arcane Comet": "Sorcery", "Phase Rush": "Sorcery",
+    "Grasp of the Undying": "Resolve", "Aftershock": "Resolve", "Guardian": "Resolve",
+    "Glacial Augment": "Inspiration", "Unsealed Spellbook": "Inspiration", "First Strike": "Inspiration",
+  };
+  const fallbackPath = KEYSTONE_TO_PATH[keystone];
+  const fallbackSrc = fallbackPath
+    ? `https://ddragon.leagueoflegends.com/cdn/img/perk-images/Styles/${fallbackPath}/${fallbackPath}.png`
+    : null;
+
+  // use the real icon from the JSON
+  const runesIndex = useRunesIndex(version);
+  const icon = runesIndex?.get(keystone);
+
+  
+  // show nothing if we have neither (keystone typo, etc.)
+  if (!icon && !fallbackSrc) return null;
+
+  return (
+    <img
+      src={icon || fallbackSrc}
+      alt={keystone}
+      width={size}
+      height={size}
+      className={`rounded ${className}`}
+      loading="lazy"
+      onError={(e) => {
+        if (icon && fallbackSrc) {
+          e.currentTarget.onerror = null;
+          e.currentTarget.src = fallbackSrc;
+        }
+      }}
+      title={keystone}
+    />
+  );
+}
+function RuneIcon({ name, version, size = 32, className = "" }) {
+  if (!name) return null;
+  const runesIndex = useRunesIndex(version);
+  const src = runesIndex?.get(name);
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt={name}
+      width={size}
+      height={size}
+      className={`rounded ${className}`}
+      loading="lazy"
+      title={name}
+      onError={(e) => { e.currentTarget.style.display = "none"; }}
+    />
+  );
+}
+
+
+function RunePathsTable({ rows, version }) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  return (
+    <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
+      <div className="text-sm font-semibold mb-2">Rune Paths (Top 5)</div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="text-left text-neutral-300">
+            <tr>
+              <th className="px-2 py-1">Keystone</th>
+              <th className="px-2 py-1">Primary</th>
+              <th className="px-2 py-1">Sub</th>
+              <th className="px-2 py-1 text-right">Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 5).map((rp, i) => (
+              <tr key={i} className="border-t border-neutral-800 align-top">
+                {/* Keystone */}
+                <td className="px-2 py-1">
+                  <div className="inline-flex items-center gap-2">
+                    <RuneKeystoneIcon keystone={rp.keystone} version={version} size={40} />
+                    <span className="font-medium">{rp.keystone || "—"}</span>
+                  </div>
+                </td>
+
+                {/* Primary minors */}
+                <td className="px-2 py-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {[rp.rune1, rp.rune2, rp.rune3].filter(Boolean).map((nm, j) => (
+                      <span key={j} className="inline-flex items-center gap-1">
+                        <RuneIcon name={nm} version={version} />
+                        <span>{nm}</span>
+                        {j < 2 ? <span className="opacity-40">•</span> : null}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+
+                {/* Sub runes */}
+                <td className="px-2 py-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {[rp.subRune1, rp.subRune2].filter(Boolean).map((nm, j) => (
+                      <span key={j} className="inline-flex items-center gap-1">
+                        <RuneIcon name={nm} version={version} />
+                        <span>{nm}</span>
+                        {j === 0 && rp.subRune2 ? <span className="opacity-40">•</span> : null}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+
+                {/* Share */}
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {(rp.share * 100).toFixed(1)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Compact stats table for lane metrics
+function CompactStatsTable({ rows }) {
+  // rows: [{label, value, title?}]
+  return (
+    <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
+      <div className="text-sm font-semibold mb-2">Lane & Combat Metrics</div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="text-left text-neutral-300">
+            <tr>
+              {rows.map((r, i) => (
+                <th key={i} className="px-2 py-1">{r.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {rows.map((r, i) => (
+                <td key={i} className="px-2 py-1 tabular-nums" title={r.title || r.label}>
+                  {r.value}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+
+function ShardIcon({ name, size = 20, className = "" }) {
+  if (!name) return null;
+
+  // normalize (strip spaces, punctuation, case)
+  const key = String(name).toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+  // List candidates (first one that loads wins)
+  const CANDIDATES = {
+    adaptiveforce:            ["StatModsAdaptiveForceIcon"],
+    attackspeed:              ["StatModsAttackSpeedIcon"],
+    abilityhaste:             ["StatModsAbilityHasteIcon", "StatModsCDRScalingIcon", "StatModsCooldownReductionIcon"],
+    movespeed:                ["StatModsMovementSpeedIcon"],
+    tenacityandslowresist:    ["StatModsTenacityIcon"],
+    health:                   ["StatModsHealthPlusIcon", "StatModsHealthIcon"],
+    healthscaling:            ["StatModsHealthScalingIcon"],
+  };
+
+  const files = CANDIDATES[key];
+  if (!files || !files.length) return null;
+
+  const [idx, setIdx] = useState(0);
+  const src = `https://ddragon.leagueoflegends.com/cdn/img/perk-images/StatMods/${files[idx]}.png`;
+
+  return (
+    <img
+      src={src}
+      alt={name}
+      width={size}
+      height={size}
+      className={`rounded ${className}`}
+      loading="lazy"
+      title={name}
+      onError={() => {
+        if (idx + 1 < files.length) setIdx(idx + 1);
+      }}
+    />
+  );
+}
 
 async function getJSON(path, fallback) {
   try {
@@ -190,17 +449,19 @@ async function getJSON(path, fallback) {
   }
 }
 
-function Card({ label, value, dark = false }) {
+function Card({ label, value, dark = false, dense = false }) {
   const box =
     dark
       ? "bg-neutral-900 border border-neutral-800 text-neutral-100"
       : "bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800";
   const labelCls = dark ? "text-neutral-400" : "text-neutral-500 dark:text-neutral-400";
   const valueCls = dark ? "text-neutral-50" : "";
+  const pad = dense ? "p-3" : "p-4";
+  const valueSize = dense ? "text-xl" : "text-2xl";
   return (
-    <div className={`${box} rounded p-4 shadow-sm`}>
+    <div className={`${box} rounded ${pad} shadow-sm`}>
       <div className={`text-sm ${labelCls}`}>{label}</div>
-      <div className={`text-2xl font-bold ${valueCls}`}>{value}</div>
+      <div className={`${valueSize} font-bold ${valueCls}`}>{value}</div>
     </div>
   );
 }
@@ -304,7 +565,7 @@ if (!bucket) {
     const dist = Math.abs(cand[0]-tgt[0]) * 10000 + Math.abs(cand[1]-tgt[1]) * 100 + Math.abs(cand[2]-tgt[2]);
     if (dist < bestDist) { bestDist = dist; bestKey = pKey; }
   }
-  bucket = bestKey ? data[bestKey][role] : null;
+  bucket = bestKey ? data[bestKey][rKey] : null;
 }
 s = pickShareFromRoleBucket(bucket);
         }
@@ -567,7 +828,54 @@ function ChampionPage() {
   const CHAMP_HEADER_ICON_SIZE = 60; // try 56–64 if you want bigger
   const displayName = meta?.name || (slug ? slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "");
   const ITEM_ICON_SIZE = 40; // try 28 or 32 if you want larger  
-  const toPct = (x) => x == null ? "–" : `${(x*100).toFixed(1)}%`;
+  // --- needed by the JSX below ---
+  const pct = (x) => (x == null ? "–" : (x * 100).toFixed(1) + "%");
+  const int = (x) =>
+    x == null ? "–" : new Intl.NumberFormat().format(Math.round(Number(x)));
+  const num = (x, d = 1) =>
+    x == null ? "–" : Number(x).toFixed(d);
+
+  // Roles to show as pills (>=5% share); derive from meta first, then fallback to data[patch]
+  const rolesOver5 = useMemo(() => {
+    const out = [];
+
+    // 1) from meta (if present)
+    if (meta?.roles?.length) {
+      for (const r of meta.roles) {
+        out.push({
+          role: r.role,
+          pickShare: r.pickShare ?? r.share ?? 0,
+        });
+      }
+    }
+
+    // 2) from data[patch] (fallback / enhance)
+    const byRole =
+      patch && patch !== "__ALL__" && data?.[patch] ? data[patch] : null;
+
+    if (byRole && typeof byRole === "object") {
+      const total = Object.values(byRole).reduce(
+        (s, b) => s + (b?.games || 0),
+        0
+      );
+      for (const rKey of Object.keys(byRole)) {
+        const share = total ? (byRole[rKey]?.games || 0) / total : 0;
+        const i = out.findIndex((x) => x.role === rKey);
+        if (i >= 0) {
+          if (out[i].pickShare == null) out[i].pickShare = share;
+        } else {
+          out.push({ role: rKey, pickShare: share });
+        }
+      }
+    }
+
+    // filter + sort
+    return out
+      .filter((r) => (r.pickShare ?? 0) >= 0.05)
+      .sort((a, b) => (b.pickShare ?? 0) - (a.pickShare ?? 0));
+  }, [meta, data, patch]);
+
+  const showRoleSwitch = rolesOver5.length > 1;
 
 
   // --- Mastery split (Best/Best2/Best3/Top5/BelowTop5) ---
@@ -604,7 +912,7 @@ function ChampionPage() {
         <td key={key} className="px-2 py-1 tabular-nums text-right">
           {renderFn(mastery?.[key], key)}
         </td>
-      ));
+      ));    
 
     return (
       <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
@@ -796,6 +1104,7 @@ function combineAcrossPatches(allData, role) {
     avgCsAt10_sum: 0, avgCsDiffAt10_sum: 0, avgDPM_sum: 0, avgKP_sum: 0,
     teamFBTowerRate_num: 0, teamFBTowerRate_den: 0,
     opponents: {},
+    runePathsMap: new Map(),
     mastery: {
       BestMastery:       { games: 0, wins: 0, sumAvg: 0, denAvg: 0 },
       Best2Mastery:      { games: 0, wins: 0, sumAvg: 0, denAvg: 0 },
@@ -817,6 +1126,38 @@ function combineAcrossPatches(allData, role) {
     const g = r.games || 0;
     const w = r.wins  || 0;
     acc.games += g; acc.wins += w;
+
+    // rune paths (weight by champ games in that patch)
+    if (Array.isArray(r.runePathsTop) && g > 0) {
+      for (const rp of r.runePathsTop) {
+        // Many JSONs only have share (fraction of this champ's games). Turn it into games weight.
+        const rpGames = Math.max(0, Number(rp?.share || 0)) * g;
+        if (rpGames <= 0) continue;
+
+        // Make a stable key so identical paths merge
+        const key = [
+          rp.keystone || "",
+          rp.rune1 || "", rp.rune2 || "", rp.rune3 || "",
+          rp.subRune1 || "", rp.subRune2 || ""
+        ].join("|");
+
+        const cur = acc.runePathsMap.get(key) || {
+          keystone: rp.keystone || null,
+          rune1: rp.rune1 || null, rune2: rp.rune2 || null, rune3: rp.rune3 || null,
+          subRune1: rp.subRune1 || null, subRune2: rp.subRune2 || null,
+          games: 0,
+          wins: 0, // only used if your JSON has winRate per path; fine if it stays 0
+        };
+
+        cur.games += rpGames;
+
+        // If per-path winRate exists in your JSON, weight it too:
+        if (rp.winRate != null) cur.wins += rp.winRate * rpGames;
+
+        acc.runePathsMap.set(key, cur);
+      }
+    }
+    
 
     const addW = (key, val)=> { if (val!=null) acc[key] += val*g; };
     addW("avgGameLengthMin_sum", r.avgGameLengthMin);
@@ -948,6 +1289,19 @@ function combineAcrossPatches(allData, role) {
     games: acc.games,
     wins: acc.wins,
     winRate: acc.games? acc.wins/acc.games : null,
+    runePathsTop: (() => {
+      const totalChampGames = acc.games || 0;
+      return Array.from(acc.runePathsMap.values())
+        .map(rp => ({
+          keystone: rp.keystone,
+          rune1: rp.rune1, rune2: rp.rune2, rune3: rp.rune3,
+          subRune1: rp.subRune1, subRune2: rp.subRune2,
+          share: totalChampGames ? rp.games / totalChampGames : 0,
+          // winRate: rp.games > 0 ? (rp.wins / rp.games) : null,
+        }))
+        .filter(x => (x.share || 0) > 0)
+        .sort((a, b) => b.share - a.share);
+    })(),
     avgGameLengthMin: acc.games? acc.avgGameLengthMin_sum/acc.games : null,
     avgKills:         acc.games? acc.avgKills_sum/acc.games : null,
     avgDeaths:        acc.games? acc.avgDeaths_sum/acc.games : null,
@@ -959,7 +1313,7 @@ function combineAcrossPatches(allData, role) {
     avgDPM:           acc.games? acc.avgDPM_sum/acc.games : null,
     avgKP:            acc.games? acc.avgKP_sum/acc.games : null,
     teamFBTowerRate:  acc.teamFBTowerRate_den ? acc.teamFBTowerRate_num/acc.teamFBTowerRate_den : null,
-    opponents: opponentsList,
+    opponents: opponentsList,    
     shardsGrid,
     mastery: (() => {
       const out = {};
@@ -1041,9 +1395,10 @@ function combineAcrossPatches(allData, role) {
     ...(cur || {})
   }), [cur]);
   // --- MATCHUPS: compute EB score (heavily games-weighted) ---
-  function matchupScore(wins, games, prior = (C.winRate ?? 0.5), K = 2000) {
+  // --- MATCHUPS: compute EB score (light smoothing, follows observed WR) ---
+  function matchupScore(wins, games, prior = 0.5, K = 50) {
     const alpha = prior * K, beta = (1 - prior) * K;
-    return (wins + alpha) / (games + alpha + beta);
+    return games > 0 ? (wins + alpha) / (games + alpha + beta) : prior;
   }
 
   // require real opponent data; skip if we don't have wins nor winRate
@@ -1053,93 +1408,140 @@ function combineAcrossPatches(allData, role) {
       opponentChamp: o.opponentChamp,
       games: o.games,
       wins: Math.round((C?.winRate ?? 0.5) * (o.games || 0)),
-    })) : [];
-
-  // normalize rows and compute score
-  const scoredOpp = rawOpp
-    .filter(o => o && o.opponentChamp && (o.games || 0) > 0 && (o.wins != null || o.winRate != null))
+    })) : [];  
+  
+  
+  // Our DB already stores *our* wins in o.wins.
+  // So do NOT subtract; just use o.wins directly.
+  const scoredOpp = (Array.isArray(rawOpp) ? rawOpp : [])
+    .filter(o => o && o.opponentChamp && (o.games || 0) > 0 && (o.wins != null))
     .map(o => {
-      const games = o.games || 0;
-      const wins  = (o.wins != null) ? o.wins : Math.round((o.winRate || 0) * games);
-      const wr    = games ? wins / games : null;         // observed WR for display
-      const score = matchupScore(wins, games, cur?.winRate ?? 0.5, 800);
-      return { enemy: o.opponentChamp, games, wins, winRate: wr, vsScore: score };
+      const games   = o.games || 0;
+      const wins    = o.wins  || 0;        // <- our wins directly from DB
+      const wr      = games ? wins / games : null;  // our WR vs that champ
+      const vsScore = matchupScore(wins, games, 0.5, 50); // light smoothing
+      return { enemy: o.opponentChamp, games, wins, winRate: wr, vsScore };
     });
 
-  // build a 0..100 index to grade
+  // Global scale for Tier letters
   const sMin = Math.min(...scoredOpp.map(x => x.vsScore));
   const sMax = Math.max(...scoredOpp.map(x => x.vsScore));
   const span = (isFinite(sMin) && isFinite(sMax) && sMax > sMin) ? (sMax - sMin) : 1;
+  const MIN_MATCHUP_GAMES_PRIMARY = 50; // cap
+  const MIN_MATCHUP_GAMES_SECOND  = 10; // soft fallback
+  const MIN_MATCHUP_GAMES_FRACTION = 0.01; // 1% of this champ's total games
 
   const withIdx = scoredOpp.map(x => ({
     ...x,
     vsIdx: Math.round(100 * (x.vsScore - sMin) / span)
   }));
 
-
-  // order: Best by score desc; Worst by score asc
-  const best10  = [...withIdx].sort((a,b) => (b.vsScore - a.vsScore) || (b.games - a.games)).slice(0, 10);
-  const MIN_WORST_GAMES = Math.max(10, Math.round(0.02 * (cur?.games || 0))); // 2% of champ games, at least 10
-
-  const worstSorted = [...withIdx].sort(
-    (a,b) => (a.vsScore - b.vsScore) || (b.games - a.games)
+  // champ games for dynamic thresholding
+  const champGames = C?.games || 0;
+  // use the *smaller* of (fixed cap, % of this champ's games),
+  // but never below the SECOND floor
+  const dynPrimary = Math.max(
+    MIN_MATCHUP_GAMES_SECOND,
+    Math.min(MIN_MATCHUP_GAMES_PRIMARY, Math.round(champGames * MIN_MATCHUP_GAMES_FRACTION))
   );
 
-  // first take rows with enough games
-  let worst10 = worstSorted.filter(r => (r.games || 0) >= MIN_WORST_GAMES).slice(0, 10);
+// 1) Apply game floors ONCE to decide eligibility
+const primary = withIdx.filter(r => (r.games || 0) >= dynPrimary);
+let pool = primary.length
+  ? primary
+  : withIdx.filter(r => (r.games || 0) >= MIN_MATCHUP_GAMES_SECOND);
 
-  // if we didn’t get 10 yet, relax the floor gradually (keeps order by EB score)
-  if (worst10.length < 10) {
-    const half = Math.max(5, Math.floor(MIN_WORST_GAMES / 2));
-    const add = worstSorted.filter(r => (r.games || 0) >= half && !worst10.includes(r))
-                          .slice(0, 10 - worst10.length);
-    worst10 = worst10.concat(add);
-  }
-  if (worst10.length < 10) {
-    const add = worstSorted.filter(r => !worst10.includes(r))
-                          .slice(0, 10 - worst10.length);
-    worst10 = worst10.concat(add);
-  }
-  const pct = (x) => (x==null ? "–" : (x*100).toFixed(2)+"%");
-  const num = (x, d=2) => (x==null ? "–" : Number(x).toFixed(d));
-  const int = (x) => (x==null ? "–" : new Intl.NumberFormat().format(Math.round(x)));
+// If we *still* have too few rows, fall back to *all* opponents
+if (pool.length < 8) pool = withIdx;
 
-  const rolesOver5 = (meta?.roles || []).filter(r => (r.pickShare || 0) >= 0.05);
-  const showRoleSwitch = rolesOver5.length >= 1 && (meta?.roles || []).length > 1;
+  // 2) Sort once by our score (desc = best first, tie-break by more games)
+  const sortedDesc = [...pool].sort(
+    (a, b) => (b.vsScore - a.vsScore) || (b.games - a.games)
+  );
+
+  // 3) Size for each list
+  const N = Math.min(10, Math.floor(sortedDesc.length / 2));
+
+  // 4) Enforce sign on WR for each table
+  let positivesDesc = sortedDesc.filter(r => (r.winRate ?? 0.5) > 0.5);
+  let negativesDesc = sortedDesc.filter(r => (r.winRate ?? 0.5) < 0.5);
+
+  // 4a) If positives are too few, re-check with *all* opponents (ignoring floors) but still keep sign
+  if (positivesDesc.length < Math.min(5, N)) {
+    const allSorted = [...withIdx].sort((a,b)=>(b.vsScore-a.vsScore)||(b.games-a.games));
+    positivesDesc = allSorted.filter(r => (r.winRate ?? 0.5) > 0.5);
+  }
+  if (negativesDesc.length < Math.min(5, N)) {
+    const allSorted = [...withIdx].sort((a,b)=>(b.vsScore-a.vsScore)||(b.games-a.games));
+    negativesDesc = allSorted.filter(r => (r.winRate ?? 0.5) < 0.5);
+  }
+
+  const best10  = positivesDesc.slice(0, N);
+  const worst10 = [...negativesDesc.slice(-N)].reverse();
 
   // helper to render shard grid (3 columns, top 3 options per slot)
   const ShardGrid = ({ grid }) => {
   if (!Array.isArray(grid) || grid.length !== 3) return null;
 
-  // Build 3 rows of [slot1[i], slot2[i], slot3[i]]
-  const rows = [0, 1, 2].map(i => [
-    grid[0]?.options[i],
-    grid[1]?.options[i],
-    grid[2]?.options[i],
-  ]);
+  const ROW_TITLES = ["Offense", "Flex", "Defense"];
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full border-collapse border border-neutral-800">
+      <table className="min-w-full border-collapse border border-neutral-800 text-sm">
+        <thead className="bg-neutral-800/40">
+          <tr>
+            <th className="border border-neutral-800 px-2 py-1 text-left text-xs text-neutral-300">
+              Slot
+            </th>
+            <th className="border border-neutral-800 px-2 py-1 text-center text-xs text-neutral-300">
+              1st
+            </th>
+            <th className="border border-neutral-800 px-2 py-1 text-center text-xs text-neutral-300">
+              2nd
+            </th>
+            <th className="border border-neutral-800 px-2 py-1 text-center text-xs text-neutral-300">
+              3rd
+            </th>
+          </tr>
+        </thead>
         <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri}>
-              {row.map((opt, ci) => (
-                <td
-                  key={ci}
-                  className="border border-neutral-800 p-2 text-sm align-top"
-                >
-                  <div className="font-medium">{opt?.name || "—"}</div>
-                  <div className="text-xs text-neutral-400">
-                    {opt?.winRate == null
-                      ? "–"
-                      : `${(opt.winRate * 100).toFixed(0)}% WR`}{" "}
-                    • {opt?.games || 0} games
-                  </div>
+          {ROW_TITLES.map((title, rowIdx) => {
+            const opts = grid[rowIdx]?.options?.slice(0, 3) || [];
+            return (
+              <tr key={title}>
+                {/* Left label cell */}
+                <td className="border border-neutral-800 px-2 py-1 font-semibold">
+                  {title}
                 </td>
-              ))}
-            </tr>
-          ))}
+
+                {/* Up to 3 options side by side */}
+                {Array.from({ length: 3 }).map((_, colIdx) => {
+                  const opt = opts[colIdx];
+                  return (
+                    <td
+                      key={colIdx}
+                      className="border border-neutral-800 px-2 py-1 text-center align-top"
+                    >
+                      {opt ? (
+                        <div className="flex flex-col items-center gap-1">
+                          <ShardIcon name={opt?.name} size={32} />
+                          <span className="text-xs">{opt?.name}</span>
+                          <span className="text-[11px] text-neutral-400">
+                            {opt?.winRate == null
+                              ? "–"
+                              : `${(opt.winRate * 100).toFixed(0)}%`} •{" "}
+                            {opt?.games || 0}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="opacity-50">—</span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -1227,18 +1629,24 @@ function combineAcrossPatches(allData, role) {
     )}
 
     {/* Two-column content */}
-    <section className="grid gap-4 lg:grid-cols-3">
-      {/* Lane metrics */}
-      <div className="lg:col-span-2 grid gap-4 sm:grid-cols-2">
-        <Card dark label="GD@5" value={num(cur?.avgGoldDiffAt5,1)} />
-        <Card dark label="GD@10" value={num(cur?.avgGoldDiffAt10,1)} />
-        <Card dark label="CS@10" value={num(cur?.avgCsAt10,2)} />
-        <Card dark label="CSD@10" value={num(cur?.avgCsDiffAt10,2)} />
-        <Card dark label="DPM" value={num(cur?.avgDPM,1)} />
-        <Card dark label="Team FB Tower WR" value={cur?.teamFBTowerRate != null ? (cur.teamFBTowerRate*100).toFixed(1)+"%" : "–"} />
+    <section className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
+      {/* LEFT COLUMN: compact metrics + rune paths table */}
+      <div className="space-y-4">
+        <CompactStatsTable
+          rows={[
+            { label: "GD@5",           value: num(cur?.avgGoldDiffAt5,1) },
+            { label: "GD@10",          value: num(cur?.avgGoldDiffAt10,1) },
+            { label: "CS@10",          value: num(cur?.avgCsAt10,2) },
+            { label: "CSD@10",         value: num(cur?.avgCsDiffAt10,2) },
+            { label: "DPM",            value: num(cur?.avgDPM,1) },
+            { label: "Team FB Tower",  value: (cur?.teamFBTowerRate != null ? (cur.teamFBTowerRate*100).toFixed(1)+"%" : "–") },
+          ]}
+        />
+
+        <RunePathsTable rows={cur?.runePathsTop || []} version={ddVersion} />
       </div>
 
-      {/* Runes + Summoners + Shards */}
+      {/* RIGHT COLUMN: Summoner Spells + Shards (more room) */}
       <div className="space-y-4">
         {/* Summoner Spells — Top 5 combos */}
         <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
@@ -1254,15 +1662,17 @@ function combineAcrossPatches(allData, role) {
                       <div className="font-medium">
                         {((c.winRate ?? 0) * 100).toFixed(0)}% WR <span className="opacity-70">• {fmtInt(c.games)} games</span>
                       </div>
+                      <div className="opacity-80">{uses.map((u,i) => (u!=null ? u.toFixed(1) : "–")).join(" / ")} avg uses</div>
                     </div>
-                    {spells.map((name, idx) => (
-                      <div key={idx} className="flex items-center justify-between">
-                        <div>{name}</div>
-                        <div className="opacity-80">
-                          {uses[idx] != null ? `${(uses[idx]).toFixed(1)} avg uses` : "–"}
-                        </div>
-                      </div>
-                    ))}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {spells.map((name, idx) => (
+                        <span key={idx} className="inline-flex items-center gap-1">
+                          <SpellIcon name={name} version={ddVersion} />
+                          <span>{name}</span>
+                          {idx === 0 && spells.length === 2 && <span className="opacity-40 mx-1">+</span>}
+                        </span>
+                      ))}
+                    </div>
                   </li>
                 );
               })}
@@ -1272,38 +1682,17 @@ function combineAcrossPatches(allData, role) {
           )}
         </div>
 
-        {/* Runes — Top 5 paths */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
-          <div className="text-sm font-semibold mb-2">Most common rune paths (Top 5)</div>
-          {Array.isArray(cur?.runePathsTop) && cur.runePathsTop.length ? (
-            <ol className="text-sm space-y-1 list-decimal list-inside">
-              {cur.runePathsTop.slice(0,5).map((rp, i) => (
-                <li key={i} className="flex items-start justify-between gap-2">
-                  <div className="flex-1">
-                    <div className="font-medium">{rp.keystone || "—"}</div>
-                    <div className="opacity-80">{[rp.rune1, rp.rune2, rp.rune3].filter(Boolean).join(" • ") || "—"}</div>
-                    <div className="opacity-80">Sub: {[rp.subRune1, rp.subRune2].filter(Boolean).join(" • ") || "—"}</div>
-                  </div>
-                  <div className="shrink-0 text-right">{(rp.share*100).toFixed(1)}%</div>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <div className="text-sm opacity-70">No rune path data</div>
-          )}
-        </div>
-
-        {/* Shards — 3×3 grid (top 3 per slot) */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
-          <div className="text-sm font-semibold mb-2">Shard Choices</div>
-          {Array.isArray(cur?.shardsGrid) && cur.shardsGrid.length === 3 ? (
-            <ShardGrid grid={cur.shardsGrid} />
-          ) : (
-            <div className="text-sm opacity-70">No shard data</div>
-          )}
-        </div>
-      </div>
-    </section>
+    {/* Shards — 3×3 grid (top 3 per slot) */}
+    <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
+      <div className="text-sm font-semibold mb-2">Shard Choices</div>
+      {Array.isArray(cur?.shardsGrid) && cur.shardsGrid.length === 3 ? (
+        <ShardGrid grid={cur.shardsGrid} />
+      ) : (
+        <div className="text-sm opacity-70">No shard data</div>
+      )}
+    </div>
+  </div>
+</section>
 
     {/* Matchups */}
     {(best10.length || worst10.length) ? (
