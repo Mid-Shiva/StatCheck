@@ -1,5 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
-import { BrowserRouter, Routes, Route, Link, useParams, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState, } from "react";
+import { BrowserRouter, Routes, Route, Link, useParams, useSearchParams, useLocation } from "react-router-dom";
+import { PageFade, AnimatedRoutes, MotionTableRow, AnimatedBar, GlowImg, TableSkeleton, SoftCard } from "./animations";
+
+// Mastery icons (bundled from src/assets/mastery)
+import m1 from "./assets/mastery/m1.png";
+import m2 from "./assets/mastery/m2.png";
+import m3 from "./assets/mastery/m3.png";
+import m4 from "./assets/mastery/m4.png";
+import m5 from "./assets/mastery/m5.png";
+import m6 from "./assets/mastery/m6.png";
+import m7 from "./assets/mastery/m7.png";
+
+const MASTERY_ICONS = { 1: m1, 2: m2, 3: m3, 4: m4, 5: m5, 6: m6, 7: m7 };
 
 
 
@@ -101,7 +113,23 @@ function useDdragonVersion() {
   return ver || DDRAGON_VER_FALLBACK;
 }
 
-
+// load mastery icons from disk
+function MasteryIcon({ level = 7, size = 42, className = "" }) {
+  const L = Math.min(Math.max(1, Number(level) || 7), 7);
+  const src = MASTERY_ICONS[L];
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt={`Mastery ${L}`}
+      width={size}
+      height={size}
+      className={className}
+      loading="lazy"
+      title={`Mastery ${L}`}
+    />
+  );
+}
 
 // <ChampionIcon name="Aatrox" version={ver} />
 function ChampionIcon({ name, version, size = 20, className = "" }) {
@@ -315,52 +343,64 @@ function RunePathsTable({ rows, version }) {
               <th className="px-2 py-1">Keystone</th>
               <th className="px-2 py-1">Primary</th>
               <th className="px-2 py-1">Sub</th>
+              <th className="px-2 py-1 text-right">WR</th>      {/* <-- add this */}
               <th className="px-2 py-1 text-right">Share</th>
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, 5).map((rp, i) => (
-              <tr key={i} className="border-t border-neutral-800 align-top">
-                {/* Keystone */}
-                <td className="px-2 py-1">
-                  <div className="inline-flex items-center gap-2">
-                    <RuneKeystoneIcon keystone={rp.keystone} version={version} size={40} />
-                    <span className="font-medium">{rp.keystone || "—"}</span>
-                  </div>
-                </td>
+            {rows.slice(0, 5).map((rp, i) => {
+              const g  = Number(rp?.games) || 0;
+              const w  = (rp?.wins != null) ? Number(rp.wins)
+                        : (typeof rp?.winRate === "number" && g ? rp.winRate * g : 0);
+              const wr = g > 0
+                ? (rp?.winRate != null ? rp.winRate : w / g)
+                : null;
 
-                {/* Primary minors */}
-                <td className="px-2 py-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {[rp.rune1, rp.rune2, rp.rune3].filter(Boolean).map((nm, j) => (
-                      <span key={j} className="inline-flex items-center gap-1">
-                        <RuneIcon name={nm} version={version} />
-                        <span>{nm}</span>
-                        {j < 2 ? <span className="opacity-40">•</span> : null}
-                      </span>
-                    ))}
-                  </div>
-                </td>
+              return (
+                <tr key={i} className="border-t border-neutral-800 align-top">
+                  <td className="px-2 py-1">
+                    <div className="inline-flex items-center gap-2">
+                      <RuneKeystoneIcon keystone={rp.keystone} version={version} size={40} />
+                      <span className="font-medium">{rp.keystone || "—"}</span>
+                    </div>
+                  </td>
 
-                {/* Sub runes */}
-                <td className="px-2 py-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {[rp.subRune1, rp.subRune2].filter(Boolean).map((nm, j) => (
-                      <span key={j} className="inline-flex items-center gap-1">
-                        <RuneIcon name={nm} version={version} />
-                        <span>{nm}</span>
-                        {j === 0 && rp.subRune2 ? <span className="opacity-40">•</span> : null}
-                      </span>
-                    ))}
-                  </div>
-                </td>
+                  <td className="px-2 py-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {[rp.rune1, rp.rune2, rp.rune3].filter(Boolean).map((nm, j) => (
+                        <span key={j} className="inline-flex items-center gap-1">
+                          <RuneIcon name={nm} version={version} />
+                          <span>{nm}</span>
+                          {j < 2 ? <span className="opacity-40">•</span> : null}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
 
-                {/* Share */}
-                <td className="px-2 py-1 text-right tabular-nums">
-                  {(rp.share * 100).toFixed(1)}%
-                </td>
-              </tr>
-            ))}
+                  <td className="px-2 py-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {[rp.subRune1, rp.subRune2].filter(Boolean).map((nm, j) => (
+                        <span key={j} className="inline-flex items-center gap-1">
+                          <RuneIcon name={nm} version={version} />
+                          <span>{nm}</span>
+                          {j === 0 && rp.subRune2 ? <span className="opacity-40">•</span> : null}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+
+                  {/* NEW WR% cell */}
+                  <td className="px-2 py-1 text-right tabular-nums">
+                    {wr == null ? "–" : (wr * 100).toFixed(1) + "%"}
+                  </td>
+
+                  {/* existing Share cell */}
+                  <td className="px-2 py-1 text-right tabular-nums">
+                    {rp?.share == null ? "–" : (rp.share * 100).toFixed(1) + "%"}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -459,7 +499,7 @@ function Card({ label, value, dark = false, dense = false }) {
   const pad = dense ? "p-3" : "p-4";
   const valueSize = dense ? "text-xl" : "text-2xl";
   return (
-    <div className={`${box} rounded ${pad} shadow-sm`}>
+    <div className={`${box} rounded-xl ${pad} shadow-sm ring-1 ring-neutral-200/60 dark:ring-neutral-800/60`}>
       <div className={`text-sm ${labelCls}`}>{label}</div>
       <div className={`${valueSize} font-bold ${valueCls}`}>{value}</div>
     </div>
@@ -652,22 +692,14 @@ function LeaderboardTable({ rows, role, patch, otpFromAllBySlug }) {
 
   const COLUMNS = [
     {
-      key: "tier", label: "Tier", align: "left", accessor: r => r.score, // sort by EB score
+      key: "tier", label: "Tier", align: "left", accessor: r => r.score,
       render: r => {
         const g = gradeFromIdx(r.scoreIdx);
         const idx = Math.max(0, Math.min(100, r.scoreIdx ?? 0));
         return (
           <div className="flex items-center gap-3">
             <span className={`text-xs px-2 py-0.5 rounded border ${gradeClass(g)}`}>{g}</span>
-            <div className="w-20 h-2 rounded bg-neutral-800 overflow-hidden">
-              <div className="h-2 bg-blue-500" style={{ width: `${idx}%` }} />
-            </div>
-            <span
-              className="text-xs px-2 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-200"
-              title="Games-weighted rank (0–100). Higher = better; heavily favors more games."
-            >
-              TierScore {idx}
-            </span>
+            <AnimatedBar value={idx} label={`TierScore ${idx}`} />
           </div>
         );
       },
@@ -773,7 +805,8 @@ function LeaderboardTable({ rows, role, patch, otpFromAllBySlug }) {
 
       {/* Table wrapper */}
       <div className="mt-2 w-full overflow-x-auto">
-        <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded">
+        <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800
+                        rounded-xl shadow-sm ring-1 ring-neutral-200/60 dark:ring-neutral-800/60">
           <table className="min-w-full text-sm">
             <thead className="bg-neutral-50 dark:bg-neutral-800/50">
               <tr className="text-left">
@@ -793,16 +826,18 @@ function LeaderboardTable({ rows, role, patch, otpFromAllBySlug }) {
             </thead>
             <tbody>
               {sortedRows.map((r, i) => (
-                <tr
+                <MotionTableRow
                   key={r.champion + "_" + i}
-                  className="border-t border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800/40"
+                  className="border-t border-neutral-200 dark:border-neutral-800
+                            odd:bg-neutral-50/40 dark:odd:bg-neutral-900/20
+                            hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition-colors"
                 >
                   {COLUMNS.map((c) => (
                     <td key={c.key} className={`px-3 py-2 tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
                       {c.render ? c.render(r, i) : (r[c.key] ?? "")}
                     </td>
                   ))}
-                </tr>
+                </MotionTableRow>
               ))}
             </tbody>
           </table>
@@ -907,53 +942,111 @@ function ChampionPage() {
     }, 0);
 
     // Render helper
-    const cells = (renderFn) =>
-      headers.map(([key]) => (
-        <td key={key} className="px-2 py-1 tabular-nums text-right">
-          {renderFn(mastery?.[key], key)}
-        </td>
-      ));    
+    // Render helper — return just values, not <td>s
+    const cellVals = (renderFn) =>
+      headers.map(([key]) => renderFn(mastery?.[key], key)); 
+
+    // column hover state (0..4), null when not hovering
+    const [hoveredCol, setHoveredCol] = useState(null);
+
+    // icon/column accent by column index
+    const colAccent = (i) => {
+      // warm gold for Best, then a subtle gradient through the rest
+      return [
+        { ring: "ring-amber-400/60", glow: "bg-amber-400/40", text: "text-amber-300" },
+        { ring: "ring-violet-400/50", glow: "bg-violet-400/40", text: "text-violet-300" },
+        { ring: "ring-sky-400/50",    glow: "bg-sky-400/40",    text: "text-sky-300" },
+        { ring: "ring-emerald-400/50",glow: "bg-emerald-400/40",text: "text-emerald-300" },
+        { ring: "ring-slate-400/40",  glow: "bg-slate-400/40",  text: "text-slate-300" },
+      ][i] || { ring: "ring-slate-400/40", glow: "bg-slate-400/30", text: "text-slate-300" };
+    };
 
     return (
       <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
         <div className="text-sm font-semibold mb-2">By Player Mastery</div>
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="text-left text-neutral-300">
-              <tr>
-                <th className="px-2 py-1"></th>
-                {headers.map(([key, label]) => (
-                  <th key={key} className="px-2 py-1 text-right">{label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {/* Row 1: Win rate (WR) */}
-              <tr className="border-t border-neutral-800">
-                <td className="px-2 py-1 text-neutral-400">WR</td>
-                {cells((m) => pct1(m?.winRate))}
-              </tr>
+          <table className="min-w-full text-sm table-fixed border-collapse">
+            <colgroup>
+              <col style={{ width: "6rem" }} />         {/* left label column */}
+              <col /> <col /> <col /> <col /> <col />   {/* five stat columns */}
+            </colgroup>
+          <thead className="text-left text-neutral-300">
+            <tr>
+              <th scope="col" className="pl-2 pr-1 py-2 align-bottom">By Player Mastery</th>
 
-              {/* Row 2: % of total games (Games%) */}
+              {[
+                { lvl: 7, label: "Best"   },
+                { lvl: 6, label: "Best 2" },
+                { lvl: 5, label: "Best 3" },
+                { lvl: 4, label: "Top 5"  },
+                { lvl: 1, label: "Below 5"},
+              ].map((c, i) => {
+                const acc = colAccent(i);
+                const active = hoveredCol === i;
+                return (
+                  <th
+                    key={c.label}
+                    scope="col"
+                    className={`p-0 align-bottom transition`}
+                    onMouseEnter={() => setHoveredCol(i)}
+                    onMouseLeave={() => setHoveredCol(null)}
+                  >
+                    <div className={`py-2 flex flex-col items-center gap-1 ${active ? "scale-[1.03]" : ""} transition`}>
+                      {/* glow + ring around the icon */}
+                      <div className="relative">
+                        <div className={`absolute -inset-2 rounded-full blur-md ${acc.glow} opacity-20 ${active ? "opacity-80" : ""}`} />
+                        <div className={`relative rounded-full ring ${acc.ring} ring-1 p-1`}>
+                          <MasteryIcon level={c.lvl} size={50} />
+                        </div>
+                      </div>
+                      <span className={`text-xs ${active ? acc.text : "text-neutral-300"}`}>{c.label}</span>
+                    </div>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+            <tbody>
+              {/* wr row */}
               <tr className="border-t border-neutral-800">
-                <td className="px-2 py-1 text-neutral-400">Games%</td>
-                {cells((m) => {
-                  const g = m?.games || 0;
-                  return totalGames ? `${((g / totalGames) * 100).toFixed(0)}%` : "–";
+                <th scope="row" className="pl-2 pr-1 py-1 text-left">WR</th>
+                {cellVals((m) => {
+                  const g  = m?.games || 0;
+                  const wr = (m?.winRate != null) ? m.winRate : (g > 0 && m?.wins != null ? (m.wins / g) : null);
+                  return pct1(wr);
+                }).map((v, i) => {
+                  const active = hoveredCol === i;
+                  return (
+                    <td key={`wr_${i}`} className={`p-0 ${active ? "bg-neutral-800/60" : ""} transition`}>
+                      <div className={`py-1 text-center tabular-nums ${active ? "font-semibold" : ""}`}>{v}</div>
+                    </td>
+                  );
                 })}
               </tr>
 
-              {/* Row 3: % of total mastery (Mastery%) */}
+              {/* games% row */}
               <tr className="border-t border-neutral-800">
-                <td className="px-2 py-1 text-neutral-400">Mastery%</td>
-                {cells((m, key) => {
-                  // BelowTop5 may not have avgChampMasteryPer; treat missing as 0
-                  const avg = m?.avgChampMasteryPer ?? 0;   // fraction
-                  const g   = m?.games || 0;
-                  const weight = avg * g;
-                  return totalMasteryWeight
-                    ? `${((weight / totalMasteryWeight) * 100).toFixed(0)}%`
-                    : "–";
+                <th scope="row" className="pl-2 pr-1 py-1 text-left">Games%</th>
+                {cellVals((m) => pct0(m?.share)).map((v, i) => {
+                const active = hoveredCol === i;
+                return (
+                  <td key={`gp_${i}`} className={`p-0 ${active ? "bg-neutral-800/60" : ""} transition`}>
+                    <div className={`py-1 text-center tabular-nums ${active ? "font-semibold" : ""}`}>{v}</div>
+                  </td>
+                );
+              })}
+              </tr>
+
+              {/* mastery% row */}
+              <tr className="border-t border-neutral-800">
+                <th scope="row" className="pl-2 pr-1 py-1 text-left">Mastery%</th>
+                {cellVals((m) => pct0(m?.avgChampMasteryPer)).map((v, i) => {
+                  const active = hoveredCol === i;
+                  return (
+                    <td key={`mp_${i}`} className={`p-0 ${active ? "bg-neutral-800/60" : ""} transition`}>
+                      <div className={`py-1 text-center tabular-nums ${active ? "font-semibold" : ""}`}>{v}</div>
+                    </td>
+                  );
                 })}
               </tr>
             </tbody>
@@ -1093,6 +1186,16 @@ const LegendaryTables = ({ data }) => {
   );
 };
 
+// Canonical shard order for ALL-patch aggregation (row 1..3)
+const SHARDS_CANON = [
+  // Offense
+  ["Adaptive Force", "Attack Speed", "Ability Haste"],
+  // Flex
+  ["Adaptive Force", "Move Speed", "Health Scaling"],
+  // Defense  ← this is the row you asked about
+  ["Health", "Tenacity and Slow Resist", "Health Scaling"]
+];
+
 function combineAcrossPatches(allData, role) {
   if (!allData) return null;
 
@@ -1114,7 +1217,19 @@ function combineAcrossPatches(allData, role) {
     },
     shardsGrid: [ {}, {}, {} ],
     summonerCombos: {},
-    items: { starter:{}, support:{}, boots:{}, footwear_games:0, footwear_sum_time:0, first10:{}, legendary:[] }
+    items: {
+      starter: {},
+      support: {},
+      boots: {},                 // legacy “final boots” catcher (kept)
+      footwear_games: 0,
+      footwear_sum_time: 0,
+      // NEW: hold tiered boots while aggregating
+      boots_t1: {},              // map: name -> { games, wins }
+      boots_t2: {},
+      boots_t3: {},
+      first10: {},
+      legendary: []
+    }
   };
 
   const sum = (a,b)=> (a||0)+(b||0);
@@ -1149,6 +1264,46 @@ function combineAcrossPatches(allData, role) {
           wins: 0, // only used if your JSON has winRate per path; fine if it stays 0
         };
 
+        const bt = r?.items?.bootsTiered;
+        if (bt) {
+          const addTier = (tierRows, target) => {
+            for (const row of (tierRows || [])) {
+              const name = row?.name || row?.item || row?.id || "";
+              if (!name) continue;
+              const g = Number(row?.games || 0);
+              // prefer explicit wins; else derive from winRate * games
+              const w = (row?.wins != null)
+                ? Number(row.wins)
+                : ((row?.winRate != null && g) ? Number(row.winRate) * g : 0);
+
+              if (!acc.items[target][name]) acc.items[target][name] = { games: 0, wins: 0 };
+              acc.items[target][name].games += g;
+              acc.items[target][name].wins  += w;
+            }
+          };
+
+          addTier(bt.tier1, "boots_t1");
+          addTier(bt.tier2, "boots_t2");
+          addTier(bt.tier3, "boots_t3");
+        }
+
+        // (optional legacy: if this per-patch bucket only had the old boots table)
+        const legacyBoots = r?.items?.boots?.options;
+        if (legacyBoots && (!bt || (!bt.tier1 && !bt.tier2 && !bt.tier3))) {
+          for (const row of legacyBoots) {
+            const name = row?.name || "";
+            if (!name) continue;
+            const g = Number(row?.games || 0);
+            const w = (row?.wins != null)
+              ? Number(row.wins)
+              : ((row?.winRate != null && g) ? Number(row.winRate) * g : 0);
+
+            if (!acc.items.boots[name]) acc.items.boots[name] = { games: 0, wins: 0 };
+            acc.items.boots[name].games += g;
+            acc.items.boots[name].wins  += w;
+          }
+        }
+
         cur.games += rpGames;
 
         // If per-path winRate exists in your JSON, weight it too:
@@ -1179,7 +1334,9 @@ function combineAcrossPatches(allData, role) {
         if (!mm) continue;
         const g2 = mm.games || 0;
         acc.mastery[key].games += g2;
-        acc.mastery[key].wins  += (mm.wins || 0);
+        const w2 = (mm.wins != null) ? Number(mm.wins)
+                : (typeof mm.winRate === "number" ? mm.winRate * g2 : 0);
+        acc.mastery[key].wins += w2;
         if (mm.avgChampMasteryPer != null) {
           // accumulate for a weighted average
           acc.mastery[key].sumAvg = (acc.mastery[key].sumAvg || 0) + Number(mm.avgChampMasteryPer) * g2;
@@ -1264,10 +1421,21 @@ function combineAcrossPatches(allData, role) {
     return { item, games:g, share, winRate:wr, avg };
   }).filter(r=> (r.share??0) >= 0.01).sort((a,b)=> b.games-a.games);
 
-  const shardsGrid = acc.shardsGrid.map(slotMap=>{
-    const options = Object.entries(slotMap).map(([name,v])=>{
-      const g=v.games||0; return {name, games:g, winRate: g? v.wins/g:null};
-    }).sort((a,b)=> b.games-a.games);
+  const shardsGrid = acc.shardsGrid.map((slotMap, slotIdx) => {
+    const order = new Map((SHARDS_CANON[slotIdx] || []).map((n, i) => [n, i]));
+    const options = Object.entries(slotMap).map(([name, v]) => {
+      const g = v.games || 0;
+      return { name, games: g, winRate: g ? v.wins / g : null };
+    });
+
+    // Primary: canonical order; Fallback: keep unknowns at the end by popularity
+    options.sort((a, b) => {
+      const ai = order.has(a.name) ? order.get(a.name) : 999;
+      const bi = order.has(b.name) ? order.get(b.name) : 999;
+      if (ai !== bi) return ai - bi;
+      return (b.games || 0) - (a.games || 0);
+    });
+
     return { options };
   });
 
@@ -1324,9 +1492,9 @@ function combineAcrossPatches(allData, role) {
         const w = m.wins || 0;
         out[key] = {
           games: g,
+          wins: w, // <-- add this so the table can derive WR when winRate is missing
           share: totalG ? g / totalG : 0,
           winRate: g ? w / g : null,
-          // no average for BelowTop5Mastery (will render as "–")
           ...(key === "BelowTop5Mastery"
             ? {}
             : { avgChampMasteryPer: (m.denAvg ? (m.sumAvg / m.denAvg) : null) })
@@ -1338,6 +1506,15 @@ function combineAcrossPatches(allData, role) {
     items: {
       starter: toRows(acc.items.starter, acc.games),
       support: toRows(acc.items.support, acc.games),
+
+      // NEW: tiered boots in ALL-patches view
+      bootsTiered: {
+        tier1: toRows(acc.items.boots_t1, acc.games),
+        tier2: toRows(acc.items.boots_t2, acc.games),
+        tier3: toRows(acc.items.boots_t3, acc.games),
+      },
+
+      // keep legacy for compatibility (unused if bootsTiered exists)
       boots: {
         options: toRows(acc.items.boots, acc.games),
         footwear: acc.items.footwear_games>0 ? {
@@ -1578,7 +1755,7 @@ if (pool.length < 8) pool = withIdx;
            })()}
          </div>
           <div className="text-sm text-neutral-400">
-            {patch === "__ALL__" ? "All patches" : `Patch ${patch}`} • Role {role}
+            {patch === "__ALL__" ? "All patches" : `Patch ${patch}`} • Role {role} • {int(C?.games || cur?.games || 0)} games
           </div>
         </div>
       </div>
@@ -1976,9 +2153,16 @@ const currentRows = useMemo(() => {
           </select>
         </div>
 
-        <div className="text-sm text-neutral-500">{loadingBoards ? "Loading…" : `${currentRows.length} champions`}</div>
-
-        <LeaderboardTable rows={currentRows} role={role} patch={patch} otpFromAllBySlug={otpFromAllBySlug} />
+       {loadingBoards ? (
+          <TableSkeleton rows={8} cols={8} />
+        ) : (
+          <LeaderboardTable
+            rows={currentRows}
+            role={role}
+            patch={patch}
+            otpFromAllBySlug={otpFromAllBySlug}
+          />
+        )}
       </section>
     </main>
     </div>
@@ -1986,13 +2170,29 @@ const currentRows = useMemo(() => {
 }
 
 function AppRouter() {
+  const location = useLocation();
+
   return (
-    <BrowserRouter basename={import.meta.env.BASE_URL}>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/champions/:slug" element={<ChampionPage />} />
+    <AnimatedRoutes location={location}>
+      <Routes location={location}>
+        <Route
+          path="/"
+          element={
+            <PageFade>
+              <Home /> {/* see Section 3 to keep your data-driven table here */}
+            </PageFade>
+          }
+        />
+        <Route
+          path="/champions/:slug"
+          element={
+            <PageFade>
+              <ChampionPage />
+            </PageFade>
+          }
+        />
       </Routes>
-    </BrowserRouter>
+    </AnimatedRoutes>
   );
 }
 
