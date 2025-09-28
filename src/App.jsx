@@ -23,6 +23,7 @@ const fmt2 = x => (x == null ? "–" : Number(x).toFixed(2));
 const fmt4 = x => (x == null ? "–" : Number(x).toFixed(4));
 const fmtInt = n => (n == null ? "–" : new Intl.NumberFormat().format(n));
 
+
 const prettySpell = (s) => {
   if (!s) return "–";
   const m = {
@@ -330,6 +331,7 @@ function RuneIcon({ name, version, size = 32, className = "" }) {
 }
 
 
+
 function RunePathsTable({ rows, version }) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
 
@@ -340,11 +342,13 @@ function RunePathsTable({ rows, version }) {
         <table className="min-w-full text-sm">
           <thead className="text-left text-neutral-300">
             <tr>
-              <th className="px-2 py-1">Keystone</th>
-              <th className="px-2 py-1">Primary</th>
-              <th className="px-2 py-1">Sub</th>
-              <th className="px-2 py-1 text-right">WR</th>      {/* <-- add this */}
-              <th className="px-2 py-1 text-right">Share</th>
+              {[
+                <th key="k"  className="px-2 py-1">Keystone</th>,
+                <th key="p"  className="px-2 py-1">Primary</th>,
+                <th key="s"  className="px-2 py-1">Sub</th>,
+                <th key="wr" className="px-2 py-1 text-right">WR</th>,
+                <th key="sh" className="px-2 py-1 text-right">Share</th>,
+              ]}
             </tr>
           </thead>
           <tbody>
@@ -431,6 +435,218 @@ function CompactStatsTable({ rows }) {
                 </td>
               ))}
             </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// number getter that tolerates alternate keys
+const getNum = (obj, ...keys) => {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+  }
+  return null;
+};
+
+
+function FirstItemComparison({ data, version, itemIndex }) {
+  if (!data || typeof data !== "object") return null;
+
+  const statLabels = {
+    gamesNext: "Games",
+    noSecondPct: "No 2nd %",
+    time_min: "Time (min)",
+    player_level: "PL",
+    player_gold_dif: "Gold Δ (P)",
+    team_gold_diff: "Gold Δ (Team)",
+    magicDamageDone: "Magic Δ",
+    magicDamageDoneToChampions: "Magic→Champs Δ",
+    magicDamageTaken: "Magic Taken Δ",
+    physicalDamageDone: "Physical Δ",
+    physicalDamageDoneToChampions: "Physical→Champs Δ",
+    physicalDamageTaken: "Physical Taken Δ",
+    totalDamageDone: "Total Δ",
+    totalDamageDoneToChampions: "Total→Champs Δ",
+    totalDamageTaken: "Total Taken Δ",
+  };
+
+  const rows = Object.entries(data).map(([name, v]) => {
+    const gFirst = Number(v?.games) || 0;
+    const hasNext = v && Object.prototype.hasOwnProperty.call(v, "next_games");
+    const gNext  = hasNext ? (Number(v?.next_games) || 0) : null;
+    const gCurN  = hasNext ? (Number(v?.curr_with_next_games) || gNext || 0) : null;
+
+    const avgFrom = (obj, g, ...sumKeys) => (g > 0 ? (getNum(obj, ...sumKeys) ?? 0) / g : null);
+
+    // keep-as-is (averaged over games that *did* buy a second item when available)
+    const time_min   = hasNext ? avgFrom(v, gCurN, "curr_with_next_sum_time_s") : avgFrom(v, gFirst, "sum_time_s");
+    const player_lvl = hasNext ? avgFrom(v, gCurN, "curr_with_next_sum_player_level") : avgFrom(v, gFirst, "sum_player_level");
+    const gold_p     = hasNext ? avgFrom(v, gCurN, "curr_with_next_sum_player_gold_dif") : avgFrom(v, gFirst, "sum_player_gold_dif");
+    const gold_team  = hasNext ? avgFrom(v, gCurN, "curr_with_next_sum_team_gold_diff") : avgFrom(v, gFirst, "sum_team_gold_diff");
+    const pl_diff_f  = hasNext
+      ? avgFrom(v, gCurN, "curr_with_next_sum_pl_diff_frac", "curr_with_next_sum_player_level_diff_frac")
+      : avgFrom(v, gFirst, "sum_pl_diff_frac");
+
+    const delta = (nextKey, ...curAltKeys) => {
+      if (!hasNext || !(gNext > 0 && gCurN > 0)) return null;
+      const n = avgFrom(v, gNext, nextKey);
+      const c = avgFrom(v, gCurN, ...curAltKeys);
+      return (n == null || c == null) ? null : (n - c);
+    };
+
+    // deltas (Next − Current)
+    const magic             = delta("next_sum_magicDamageDone",            "curr_with_next_sum_magicDamageDone");
+    const magicChamps       = delta("next_sum_magicDamageDoneToChampions", "curr_with_next_sum_magicDamageDoneToChampions");
+    const magicTaken        = delta("next_sum_magicDamageTaken",           "curr_with_next_sum_magicDamageTaken");
+
+    const phys              = delta("next_sum_physicalDamageDone",            "curr_with_next_sum_physicalDamageDone");
+    const physChamps        = delta("next_sum_physicalDamageDoneToChampions", "curr_with_next_sum_physicalDamageDoneToChampions");
+    const physTaken         = delta("next_sum_physicalDamageTaken",           "curr_with_next_sum_physicalDamageTaken");
+
+    const total             = delta("next_sum_totalDamageDone",            "curr_with_next_sum_totalDamageDone");
+    const totalChamps       = delta("next_sum_totalDamageDoneToChampions", "curr_with_next_sum_totalDamageDoneToChampions", "curr_with_next_sum_totalDamageToChampions");
+    const totalTaken        = delta("next_sum_totalDamageTaken",           "curr_with_next_sum_totalDamageTaken");
+
+    return {
+      name,
+      hasNext,
+      gamesFirst: gFirst,
+      gamesNext: gNext,
+      noSecondPct: (hasNext && gFirst > 0) ? (1 - (gNext / gFirst)) : null,
+
+      time_min: time_min != null ? time_min / 60 : null,
+      player_level: player_lvl,
+      player_gold_dif: gold_p,
+      team_gold_diff: gold_team,
+      player_level_diff_frac: pl_diff_f,
+
+      magicDamageDone: magic,
+      magicDamageDoneToChampions: magicChamps,
+      magicDamageTaken: magicTaken,
+
+      physicalDamageDone: phys,
+      physicalDamageDoneToChampions: physChamps,
+      physicalDamageTaken: physTaken,
+
+      totalDamageDone: total,
+      totalDamageDoneToChampions: totalChamps,
+      totalDamageTaken: totalTaken,
+    };
+  });
+
+  if (!rows.length) return null;
+
+  // FIX: sort/cutoff by gamesFirst, not games
+  rows.sort((a, b) => (b.gamesFirst || 0) - (a.gamesFirst || 0));
+  const top = rows[0];
+  if (!top || (top.gamesFirst || 0) <= 0) return null;
+  const cutoff = top.gamesFirst * 0.10;
+
+  const filtered = rows
+    .filter(r => (r.gamesNext || 0) > 0)         // only first items that actually led to a 2nd item
+    .filter(r => (r.gamesFirst || 0) >= cutoff); // prominence filter
+
+  if (!filtered.length) return null;
+
+  const fmt = (x, d=1) => (x == null ? "–" : Number(x).toFixed(d));
+  const fmtInt = (n) => (n == null ? "–" : new Intl.NumberFormat().format(n));
+
+  // --- Per-stat ranking with stronger, clearer styling ---
+// NOTE: lower is better ONLY for the "time_min" row; everything else: higher is better.
+const rankByStat = {};
+const statKeys = Object.keys(statLabels);
+
+for (const key of statKeys) {
+  // Collect finite values for the visible columns
+  const pairs = filtered
+    .map((it, idx) => ({ idx, val: it[key] }))
+    .filter(p => typeof p.val === "number" && Number.isFinite(p.val));
+
+  if (pairs.length < 2) continue;
+
+  const lowerIsBetter = key === "time_min";
+
+  // Sort so that index 0 is ALWAYS the "best" for this row
+  pairs.sort((a, b) => {
+    return lowerIsBetter ? (a.val - b.val) : (b.val - a.val);
+  });
+
+  const bestIdx   = pairs[0]?.idx ?? null;                 // winner
+  const secondIdx = pairs[1]?.idx ?? null;                 // runner-up
+  const worstIdx  = pairs[pairs.length - 1]?.idx ?? null;  // lowest rank
+
+  rankByStat[key] = { bestIdx, secondIdx, worstIdx };
+}
+
+// Stronger visual differentiation, single calm hue
+const rankClass = (key, colIndex) => {
+  const r = rankByStat[key];
+  if (!r) return "";
+  if (colIndex === r.bestIdx) {
+    return "bg-emerald-500 text-white font-bold rounded-md shadow-md ring-2 ring-emerald-400";
+  }
+  if (colIndex === r.secondIdx) {
+    return "bg-emerald-500/15 text-emerald-200 rounded-md ring-1 ring-emerald-400/40";
+  }
+  if (colIndex === r.worstIdx) {
+    return "text-neutral-500 italic";
+  }
+  return "";
+};
+
+  return (
+    <div className="bg-neutral-900 border border-neutral-800 rounded p-3 mt-3">
+      <div className="text-sm font-semibold mb-2">
+        First Item Comparison
+      </div>
+       {/* PIVOTED TABLE */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="text-left text-neutral-300">
+            <tr>
+              <th className="px-2 py-1">Stat</th>
+              {filtered.map(r => (
+                <th key={r.name} className="px-2 py-1 text-right">
+                  <div className="inline-flex items-center gap-1">
+                    <ItemIcon name={r.name} version={version} itemIndex={itemIndex} size={20}/>
+                    {r.name}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(statLabels).map(([key, label]) => (
+              <tr key={key} className="border-t border-neutral-800">
+                <td className="px-2 py-1 font-medium">{label}</td>
+                {filtered.map((r, j) => {
+                  let display;
+                  const raw = r[key];
+
+                  if (key === "noSecondPct" && raw != null) {
+                    display = (raw * 100).toFixed(1) + "%";
+                  } else if (raw != null) {
+                    const digits = key.includes("time") || key.includes("level") ? 2 : 0;
+                    display = Number(raw).toFixed(digits);
+                  } else {
+                    display = "–";
+                  }
+
+                  return (
+                    <td
+                      key={r.name}
+                      className={`px-2 py-1 text-right tabular-nums ${rankClass(key, j)}`}
+                      title={raw == null ? "" : `${label} — ${r.name}`}
+                    >
+                      {display}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -967,8 +1183,8 @@ function ChampionPage() {
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm table-fixed border-collapse">
             <colgroup>
-              <col style={{ width: "6rem" }} />         {/* left label column */}
-              <col /> <col /> <col /> <col /> <col />   {/* five stat columns */}
+              <col style={{ width: "6rem" }} />
+              {[...Array(5)].map((_, i) => <col key={i} />)}
             </colgroup>
           <thead className="text-left text-neutral-300">
             <tr>
@@ -1457,19 +1673,19 @@ function combineAcrossPatches(allData, role) {
     games: acc.games,
     wins: acc.wins,
     winRate: acc.games? acc.wins/acc.games : null,
-    runePathsTop: (() => {
-      const totalChampGames = acc.games || 0;
-      return Array.from(acc.runePathsMap.values())
-        .map(rp => ({
-          keystone: rp.keystone,
-          rune1: rp.rune1, rune2: rp.rune2, rune3: rp.rune3,
-          subRune1: rp.subRune1, subRune2: rp.subRune2,
-          share: totalChampGames ? rp.games / totalChampGames : 0,
-          // winRate: rp.games > 0 ? (rp.wins / rp.games) : null,
-        }))
-        .filter(x => (x.share || 0) > 0)
-        .sort((a, b) => b.share - a.share);
-    })(),
+    runePathsTop: Array.from(acc.runePathsMap.entries())
+      .sort((a,b)=> (b[1].games - a[1].games))
+      .slice(0,5)
+      .map(([key, cur]) => {
+        const [keystone, r1, r2, r3, sr1, sr2] = key.split("|").map(x => (x || null));
+        return {
+          keystone, rune1: r1, rune2: r2, rune3: r3, subRune1: sr1, subRune2: sr2,
+          games: cur.games,
+          wins: cur.wins,
+          share: acc.games ? (cur.games / acc.games) : 0,
+          winRate: cur.games > 0 ? (cur.wins / cur.games) : null,
+        };
+      }),
     avgGameLengthMin: acc.games? acc.avgGameLengthMin_sum/acc.games : null,
     avgKills:         acc.games? acc.avgKills_sum/acc.games : null,
     avgDeaths:        acc.games? acc.avgDeaths_sum/acc.games : null,
@@ -1821,10 +2037,8 @@ if (pool.length < 8) pool = withIdx;
         />
 
         <RunePathsTable rows={cur?.runePathsTop || []} version={ddVersion} />
-      </div>
+      </div>      
 
-      {/* RIGHT COLUMN: Summoner Spells + Shards (more room) */}
-      <div className="space-y-4">
         {/* Summoner Spells — Top 5 combos */}
         <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
           <div className="text-sm font-semibold mb-2">Summoner Spells</div>
@@ -1837,9 +2051,12 @@ if (pool.length < 8) pool = withIdx;
                   <li key={i} className="space-y-0.5">
                     <div className="flex items-center justify-between gap-2">
                       <div className="font-medium">
-                        {((c.winRate ?? 0) * 100).toFixed(0)}% WR <span className="opacity-70">• {fmtInt(c.games)} games</span>
+                        {((c.winRate ?? 0) * 100).toFixed(0)}% WR{" "}
+                        <span className="opacity-70">• {fmtInt(c.games)} games</span>
                       </div>
-                      <div className="opacity-80">{uses.map((u,i) => (u!=null ? u.toFixed(1) : "–")).join(" / ")} avg uses</div>
+                      <div className="opacity-80">
+                        {uses.map((u, j) => (u != null ? u.toFixed(1) : "–")).join(" / ")} avg uses
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
                       {spells.map((name, idx) => (
@@ -1859,17 +2076,17 @@ if (pool.length < 8) pool = withIdx;
           )}
         </div>
 
-    {/* Shards — 3×3 grid (top 3 per slot) */}
-    <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
-      <div className="text-sm font-semibold mb-2">Shard Choices</div>
-      {Array.isArray(cur?.shardsGrid) && cur.shardsGrid.length === 3 ? (
-        <ShardGrid grid={cur.shardsGrid} />
-      ) : (
-        <div className="text-sm opacity-70">No shard data</div>
-      )}
-    </div>
-  </div>
-</section>
+        {/* Shards — 3×3 grid (top 3 per slot) */}
+        <div className="bg-neutral-900 border border-neutral-800 rounded p-3">
+          <div className="text-sm font-semibold mb-2">Shard Choices</div>
+          {Array.isArray(cur?.shardsGrid) && cur.shardsGrid.length === 3 ? (
+            <ShardGrid grid={cur.shardsGrid} />
+          ) : (
+            <div className="text-sm opacity-70">No shard data</div>
+          )}
+        </div>
+      
+    </section>
 
     {/* Matchups */}
     {(best10.length || worst10.length) ? (
@@ -1916,7 +2133,14 @@ if (pool.length < 8) pool = withIdx;
       <ItemTable title="First 10 min Items" rows={cur?.items?.first10 || []} />
       <LegendaryTables data={cur?.items?.legendary || []} />
     </section>
-
+    {/* Bottom of page: First Item Comparison */}
+    <div className="mt-6">
+      <FirstItemComparison
+        data={cur?.items?.first_item}
+        version={ddVersion}
+        itemIndex={itemIndex}
+      />
+    </div>    
     
     </div>
   </div>
